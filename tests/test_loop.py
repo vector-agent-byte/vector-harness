@@ -70,6 +70,23 @@ class BadArgsProvider:
             yield ProviderEvent(kind="text_delta", text="ok")
 
 
+class NoneArgsProvider:
+    def __init__(self) -> None:
+        self.stage = 0
+
+    async def stream(self, *, system: str, messages: list[Message], tools: list):
+        self.stage += 1
+        if self.stage == 1:
+            yield ProviderEvent(
+                kind="tool_call_end",
+                name="read_file",
+                tool_call_id="1",
+                arguments=None,
+            )
+        else:
+            yield ProviderEvent(kind="text_delta", text="ok")
+
+
 def run(coro):
     return asyncio.run(coro)
 
@@ -281,6 +298,33 @@ def test_transform_content_change_triggers_replace_all(tmp_path: Path):
     assert session.replace_count >= 1
     messages = session.load()
     assert messages[0].content == "[hello]"
+
+
+def test_none_arguments_skip_execute_and_produce_error():
+    provider = NoneArgsProvider()
+    tool = ReadFileTool()
+    calls = 0
+    original_execute = tool.execute
+
+    async def wrapped_execute(arguments: dict) -> str:
+        nonlocal calls
+        calls += 1
+        return await original_execute(arguments)
+
+    tool.execute = wrapped_execute
+    session = Session.in_memory()
+    loop = Loop(provider=provider, tools=[tool], session=session, system="sys")
+    result = run(loop.run("go"))
+
+    assert result.status == "complete"
+    assert result.text == "ok"
+    assert calls == 0
+
+    messages = session.load()
+    tool_msg = messages[-2]
+    assert tool_msg.role == "tool"
+    assert tool_msg.content == "Error: invalid arguments for read_file"
+    assert tool_msg.is_error is True
 
 
 def test_scripted_provider_runs_out_raises_assertion_error():

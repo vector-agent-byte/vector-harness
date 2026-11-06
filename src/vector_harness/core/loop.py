@@ -95,9 +95,7 @@ class Loop:
                             ToolCall(
                                 id=call.id,
                                 name=call.name,
-                                arguments=event.arguments
-                                if event.arguments is not None
-                                else {},
+                                arguments=event.arguments,
                             )
                         )
                     else:
@@ -105,9 +103,7 @@ class Loop:
                             ToolCall(
                                 id=event.tool_call_id,
                                 name=event.name,
-                                arguments=event.arguments
-                                if event.arguments is not None
-                                else {},
+                                arguments=event.arguments,
                             )
                         )
 
