@@ -1,0 +1,50 @@
+from __future__ import annotations
+
+import asyncio
+import time
+from pathlib import Path
+
+from vector_harness import Shell
+
+
+def run(coro):
+    return asyncio.run(coro)
+
+
+def test_shell_default_timeout(tmp_path: Path):
+    tool = Shell(tmp_path)
+    assert tool.timeout == 120
+    assert tool.name == "shell"
+
+
+def test_shell_runs_in_workspace_root(tmp_path: Path):
+    root = tmp_path / "root"
+    root.mkdir()
+    tool = Shell(root)
+    result = run(
+        tool.execute(
+            {"command": 'python -c "import pathlib; print(pathlib.Path.cwd())"'}
+        )
+    )
+    assert "exit_code=0" in result
+    assert str(root.resolve()) in result
+
+
+def test_shell_times_out_within_five_seconds(tmp_path: Path):
+    tool = Shell(tmp_path, timeout=1)
+    started = time.monotonic()
+    result = run(
+        tool.execute({"command": 'python -c "import time; time.sleep(30)"'})
+    )
+    elapsed = time.monotonic() - started
+    assert elapsed < 5
+    assert result == "Error: command timed out after 1s"
+
+
+def test_shell_truncates_output_over_max(tmp_path: Path):
+    tool = Shell(tmp_path, max_output=100)
+    result = run(tool.execute({"command": 'python -c "print(\'x\' * 9000)"'}))
+    marker = "\n...[truncated]"
+    assert marker in result
+    prefix = result.split(marker, 1)[0]
+    assert len(prefix) <= 100
