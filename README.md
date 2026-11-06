@@ -46,7 +46,7 @@
 
 ### 仓库状态
 
-目标已按上面写定。实现尚未开始。设计说明见 [docs/superpowers/specs/2026-11-06-agent-base-design.md](docs/superpowers/specs/2026-11-06-agent-base-design.md)。
+目标已按上面写定。核心、五个模式和终端入口已实现。设计说明见 [docs/superpowers/specs/2026-11-06-agent-base-design.md](docs/superpowers/specs/2026-11-06-agent-base-design.md)。
 
 ### 相关链接
 
@@ -94,7 +94,7 @@ Chat channels, a web UI, scheduled tasks, MCP, quality gates, auto research, com
 
 ### Status
 
-The goals above are agreed. Implementation has not started. See [docs/superpowers/specs/2026-11-06-agent-base-design.md](docs/superpowers/specs/2026-11-06-agent-base-design.md).
+The goals above are agreed. The core, five patterns, and terminal entry are implemented. See [docs/superpowers/specs/2026-11-06-agent-base-design.md](docs/superpowers/specs/2026-11-06-agent-base-design.md).
 
 ### Links
 

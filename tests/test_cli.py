@@ -1,0 +1,312 @@
+from __future__ import annotations
+
+import io
+import os
+import subprocess
+import sys
+from pathlib import Path
+
+import pytest
+
+from tests.scripted import ScriptedProvider, ScriptedTurn
+from vector_harness.types import ToolCall
+
+
+@pytest.fixture(scope="module", autouse=True)
+def _unload_patterns_after_module():
+    yield
+    for name in list(sys.modules):
+        if (
+            name == "vector_harness.patterns"
+            or name.startswith("vector_harness.patterns.")
+            or name == "vector_harness.cli"
+        ):
+            del sys.modules[name]
+
+
+def _drop_patterns() -> None:
+    for name in list(sys.modules):
+        if name == "vector_harness.patterns" or name.startswith(
+            "vector_harness.patterns."
+        ):
+            del sys.modules[name]
+
+
+class RecordingProvider(ScriptedProvider):
+    def __init__(self, turns: list[ScriptedTurn]) -> None:
+        super().__init__(turns)
+        self.seen_tools: list = []
+
+    async def stream(self, *, system: str, messages: list, tools: list):
+        self.seen_tools = list(tools)
+        async for event in super().stream(
+            system=system, messages=messages, tools=tools
+        ):
+            yield event
+
+
+def test_package_import_does_not_load_patterns():
+    _drop_patterns()
+    from vector_harness import (
+        EditFile,
+        Loop,
+        OpenAICompatibleProvider,
+        ReadFile,
+        Session,
+        Shell,
+    )
+
+    import vector_harness
+
+    assert Loop and Session and OpenAICompatibleProvider and ReadFile and EditFile and Shell
+    assert vector_harness is not None
+    assert "vector_harness.patterns" not in sys.modules
+
+
+def test_build_agent_without_patterns_is_a_plain_loop(tmp_path: Path):
+    from vector_harness.cli import DEFAULT_SYSTEM, build_agent
+    from vector_harness.core.loop import Loop
+    from vector_harness.core.session import Session
+
+    workspace = tmp_path / "ws"
+    workspace.mkdir()
+    agent = build_agent(
+        provider=ScriptedProvider(turns=[]),
+        workspace=workspace,
+        session=Session.in_memory(),
+    )
+    assert [tool.name for tool in agent.tools] == ["read_file", "edit_file", "shell"]
+    assert agent.context_transforms == []
+    assert agent.system == DEFAULT_SYSTEM
+    assert type(agent) is Loop
+
+
+def test_build_agent_wires_all_five_patterns(tmp_path: Path):
+    from vector_harness.cli import build_agent
+    from vector_harness.core.session import Session
+    from vector_harness.patterns.plan import PlanThenExecute
+
+    workspace = tmp_path / "ws"
+    workspace.mkdir()
+    skills = tmp_path / "skills"
+    skills.mkdir()
+    (skills / "atlas.md").write_text(
+        "---\nname: skillalpha\ndescription: recognizable skill\n---\nBODY\n",
+        encoding="utf-8",
+    )
+    memory = tmp_path / "MEMORY.md"
+    memory.write_text("memorybeta sentence\n", encoding="utf-8")
+    agent = build_agent(
+        provider=ScriptedProvider(turns=[]),
+        workspace=workspace,
+        session=Session.in_memory(),
+        skills_dir=skills,
+        memory_path=memory,
+        compact=True,
+        plan=True,
+        subagents=True,
+    )
+    assert type(agent) is PlanThenExecute
+    assert [tool.name for tool in agent.loop.tools] == [
+        "read_file",
+        "edit_file",
+        "shell",
+        "read_skill",
+        "remember",
+        "delegate",
+    ]
+    system = agent.loop.system
+    assert system.index("skillalpha") < system.index("memorybeta sentence")
+    assert agent.loop.context_transforms[0].max_chars == 80000
+    assert agent.loop.context_transforms[0].keep_last == 8
+
+
+def test_help_mentions_compaction_bounds_and_not_api_key():
+    root = Path(__file__).resolve().parents[1]
+    env = os.environ.copy()
+    src = str(root / "src")
+    previous = env.get("PYTHONPATH")
+    env["PYTHONPATH"] = src if not previous else src + os.pathsep + previous
+    proc = subprocess.run(
+        [sys.executable, "-m", "vector_harness.cli", "--help"],
+        capture_output=True,
+        text=True,
+        env=env,
+        cwd=root,
+        check=False,
+    )
+    assert proc.returncode == 0
+    assert "80000" in proc.stdout
+    assert "8" in proc.stdout
+    assert "api-key" not in proc.stdout
+
+
+def test_merged_env_overrides_model_and_base_url_only():
+    from vector_harness.cli import merged_env
+
+    merged = merged_env(
+        {"VECTOR_API_KEY": "k", "VECTOR_MODEL": "old"},
+        model="new",
+        base_url="http://example",
+    )
+    assert merged["VECTOR_MODEL"] == "new"
+    assert merged["VECTOR_BASE_URL"] == "http://example"
+    assert merged["VECTOR_API_KEY"] == "k"
+
+
+def test_main_missing_secrets_reports_env_names(capsys):
+    from vector_harness.cli import main
+
+    assert main(["do it"], environ={}) == 1
+    assert "VECTOR_API_KEY" in capsys.readouterr().err
+    assert (
+        main(
+            ["do it"],
+            environ={"VECTOR_API_KEY": "k", "VECTOR_BASE_URL": "http://example"},
+        )
+        == 1
+    )
+    assert "VECTOR_MODEL" in capsys.readouterr().err
+
+
+def test_main_runs_task_and_writes_session(tmp_path: Path, capsys):
+    from vector_harness.cli import main
+
+    workspace = tmp_path / "ws"
+    workspace.mkdir()
+    provider = ScriptedProvider(turns=[ScriptedTurn(content="MODEL_SAYS_FIX")])
+    code = main(
+        ["--workspace", str(workspace), "fix it"],
+        environ={},
+        provider=provider,
+    )
+    assert code == 0
+    user_texts = [
+        message["content"]
+        for call in provider.calls
+        for message in call["messages"]
+        if message["role"] == "user"
+    ]
+    assert user_texts == ["fix it"]
+    assert "MODEL_SAYS_FIX" in capsys.readouterr().out
+    sessions = list((workspace / ".vector" / "sessions").glob("*.jsonl"))
+    assert len(sessions) == 1
+
+
+def test_memory_flag_without_path_uses_workspace_default(tmp_path: Path):
+    from vector_harness.cli import main
+
+    workspace = tmp_path / "ws"
+    workspace.mkdir()
+    enabled = RecordingProvider(turns=[ScriptedTurn(content="ok")])
+    assert (
+        main(
+            ["--workspace", str(workspace), "note", "--memory"],
+            environ={},
+            provider=enabled,
+        )
+        == 0
+    )
+    names = [tool.name for tool in enabled.seen_tools]
+    assert "remember" in names
+    remember = next(tool for tool in enabled.seen_tools if tool.name == "remember")
+    assert remember.path == workspace / ".vector" / "MEMORY.md"
+
+    disabled = RecordingProvider(turns=[ScriptedTurn(content="ok")])
+    assert (
+        main(
+            ["--workspace", str(workspace), "note"],
+            environ={},
+            provider=disabled,
+        )
+        == 0
+    )
+    assert "remember" not in [tool.name for tool in disabled.seen_tools]
+
+
+def test_shell_command_is_printed_before_execute(tmp_path: Path, monkeypatch):
+    from vector_harness.cli import main
+
+    workspace = tmp_path / "ws"
+    workspace.mkdir()
+    buffer = io.StringIO()
+    monkeypatch.setattr(sys, "stdout", buffer)
+
+    class ProbeShell:
+        def __init__(self, root: Path, timeout: int = 120, max_output: int = 8000) -> None:
+            self.root = root
+            self.name = "shell"
+            self.description = "Run a shell command inside the workspace."
+            self.parameters = {
+                "type": "object",
+                "properties": {"command": {"type": "string"}},
+                "required": ["command"],
+            }
+
+        async def execute(self, arguments: dict) -> str:
+            assert "command: echo hi\n" in buffer.getvalue()
+            return "ok"
+
+    monkeypatch.setattr("vector_harness.cli.Shell", ProbeShell)
+    provider = ScriptedProvider(
+        turns=[
+            ScriptedTurn(
+                tool_calls=[
+                    ToolCall(id="1", name="shell", arguments={"command": "echo hi"})
+                ]
+            ),
+            ScriptedTurn(content="done"),
+        ]
+    )
+    code = main(
+        ["--workspace", str(workspace), "run"],
+        environ={},
+        provider=provider,
+    )
+    assert code == 0
+
+
+def test_stdin_stops_at_exit_and_skips_the_rest(tmp_path: Path):
+    from vector_harness.cli import main
+
+    workspace = tmp_path / "ws"
+    workspace.mkdir()
+    provider = ScriptedProvider(turns=[ScriptedTurn(content="hi")])
+    code = main(
+        ["--workspace", str(workspace)],
+        environ={},
+        provider=provider,
+        stdin_lines=["hello", "/exit", "after"],
+    )
+    assert code == 0
+    user_texts = [
+        message["content"]
+        for call in provider.calls
+        for message in call["messages"]
+        if message["role"] == "user"
+    ]
+    assert user_texts == ["hello"]
+
+
+def test_max_steps_returns_one(tmp_path: Path):
+    from vector_harness.cli import main
+
+    workspace = tmp_path / "ws"
+    workspace.mkdir()
+    call = ToolCall(id="1", name="read_file", arguments={"path": "missing.txt"})
+    provider = ScriptedProvider(
+        turns=[
+            ScriptedTurn(tool_calls=[call]),
+            ScriptedTurn(
+                tool_calls=[
+                    ToolCall(id="2", name="read_file", arguments={"path": "missing.txt"})
+                ]
+            ),
+        ]
+    )
+    code = main(
+        ["--workspace", str(workspace), "--max-steps", "1", "loop"],
+        environ={},
+        provider=provider,
+    )
+    assert code == 1
