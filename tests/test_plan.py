@@ -79,7 +79,7 @@ def test_retries_non_string_steps_then_executes_with_plan_in_session(
 
     assert result.status == "complete"
     assert result.text == "done"
-    assert result.steps == 3
+    assert result.steps == 4
     assert target.read_text(encoding="utf-8") == "ok"
     assert session.load()[0].content == "Plan:\n1. alpha"
     assert provider.calls[0]["tools"] == []

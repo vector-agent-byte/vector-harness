@@ -67,7 +67,7 @@ class PlanThenExecute:
                 return RunResult(
                     status=result.status,
                     text=result.text,
-                    steps=result.steps + 1,
+                    steps=result.steps + attempt,
                     session_path=result.session_path,
                 )
             prompt = f"Invalid plan JSON: {last_text}"
