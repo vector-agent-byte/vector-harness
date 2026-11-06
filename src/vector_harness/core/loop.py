@@ -10,6 +10,7 @@ from vector_harness.core.session import Session
 from vector_harness.types import (
     ContextTransform,
     Message,
+    ProviderError,
     ProviderEvent,
     RunResult,
     Tool,
@@ -76,36 +77,45 @@ class Loop:
             tool_calls: list[ToolCall] = []
             pending: dict[str, ToolCall] = {}
 
-            async for event in self.provider.stream(
-                system=self.system, messages=messages, tools=self.tools
-            ):
-                self._emit(event)
-                if event.kind == "text_delta":
-                    assistant_text += event.text
-                elif event.kind == "tool_call_start":
-                    pending[event.tool_call_id] = ToolCall(
-                        id=event.tool_call_id,
-                        name=event.name,
-                        arguments={},
-                    )
-                elif event.kind == "tool_call_end":
-                    if event.tool_call_id in pending:
-                        call = pending.pop(event.tool_call_id)
-                        tool_calls.append(
-                            ToolCall(
-                                id=call.id,
-                                name=call.name,
-                                arguments=event.arguments,
-                            )
+            try:
+                async for event in self.provider.stream(
+                    system=self.system, messages=messages, tools=self.tools
+                ):
+                    self._emit(event)
+                    if event.kind == "text_delta":
+                        assistant_text += event.text
+                    elif event.kind == "tool_call_start":
+                        pending[event.tool_call_id] = ToolCall(
+                            id=event.tool_call_id,
+                            name=event.name,
+                            arguments={},
                         )
-                    else:
-                        tool_calls.append(
-                            ToolCall(
-                                id=event.tool_call_id,
-                                name=event.name,
-                                arguments=event.arguments,
+                    elif event.kind == "tool_call_end":
+                        if event.tool_call_id in pending:
+                            call = pending.pop(event.tool_call_id)
+                            tool_calls.append(
+                                ToolCall(
+                                    id=call.id,
+                                    name=call.name,
+                                    arguments=event.arguments,
+                                )
                             )
-                        )
+                        else:
+                            tool_calls.append(
+                                ToolCall(
+                                    id=event.tool_call_id,
+                                    name=event.name,
+                                    arguments=event.arguments,
+                                )
+                            )
+            except ProviderError as exc:
+                result = RunResult(
+                    status="error",
+                    text=str(exc),
+                    steps=step,
+                    session_path=self.session.path,
+                )
+                break
 
             if not tool_calls:
                 self.session.append(

@@ -5,6 +5,10 @@ from pathlib import Path
 from typing import Protocol, runtime_checkable
 
 
+class ProviderError(Exception):
+    """Raised when the model provider cannot complete a request."""
+
+
 @dataclass
 class ToolCall:
     id: str
