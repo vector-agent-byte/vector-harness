@@ -18,7 +18,12 @@ def _char_count(messages: list[Message]) -> int:
 
 
 def _format_prefix(messages: list[Message]) -> str:
-    return "\n".join(f"{message.role}: {message.content}" for message in messages)
+    lines: list[str] = []
+    for message in messages:
+        lines.append(f"{message.role}: {message.content}")
+        for call in message.tool_calls or []:
+            lines.append(f"{call.name} {json.dumps(call.arguments, sort_keys=True)}")
+    return "\n".join(lines)
 
 
 class Compaction:

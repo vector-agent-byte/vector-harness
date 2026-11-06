@@ -407,6 +407,25 @@ def test_loop_runtime_error_propagates():
         asyncio.run(loop.run("hello"))
 
 
+def test_sse_error_object_raises_and_choice_less_chunk_is_ignored():
+    quiet = RecordedHandler(
+        [
+            sse_response(
+                {"id": "no-choices"},
+                {"choices": [{"index": 0, "delta": {"content": "ok"}}]},
+            )
+        ]
+    )
+    provider, _ = make_provider(quiet)
+    events = collect(provider)
+    assert [event.text for event in events if event.kind == "text_delta"] == ["ok"]
+
+    handler = RecordedHandler([sse_response({"error": {"message": "boom"}})])
+    provider, _ = make_provider(handler)
+    with pytest.raises(ProviderError, match="boom"):
+        collect(provider)
+
+
 def test_empty_tools_omits_tools_key():
     handler = RecordedHandler(
         [sse_response({"choices": [{"index": 0, "delta": {"content": "ok"}}]})]

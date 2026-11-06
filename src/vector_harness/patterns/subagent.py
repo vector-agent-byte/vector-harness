@@ -13,6 +13,7 @@ class _Delegate:
     system: str
     context_transforms: list | None = None
     max_steps: int = 10
+    host: Loop | None = field(default=None, repr=False, compare=False)
     name: str = "delegate"
     description: str = "Delegate a task to a child agent."
     parameters: dict = field(
@@ -28,6 +29,7 @@ class _Delegate:
         if not isinstance(task, str):
             task = str(task)
         child_tools = [tool for tool in self.tools if tool.name != "delegate"]
+        callback = self.host.on_event if self.host is not None else None
         child = Loop(
             provider=self.provider,
             tools=child_tools,
@@ -35,6 +37,7 @@ class _Delegate:
             system=self.system,
             context_transforms=self.context_transforms,
             max_steps=self.max_steps,
+            on_event=callback,
         )
         result = await child.run(task)
         if result.status == "complete":

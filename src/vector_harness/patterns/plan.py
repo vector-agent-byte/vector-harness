@@ -41,6 +41,8 @@ class PlanThenExecute:
             messages=[Message(role="user", content=user_content)],
             tools=[],
         ):
+            if self.loop.on_event is not None:
+                self.loop.on_event(event)
             if event.kind == "text_delta":
                 text += event.text
         return text

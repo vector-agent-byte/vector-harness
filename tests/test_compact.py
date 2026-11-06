@@ -79,6 +79,31 @@ def test_tool_call_arguments_count_toward_max_chars() -> None:
     assert len(provider.calls) == 1
 
 
+def test_summary_request_includes_tool_name_and_path() -> None:
+    messages = [
+        Message(
+            role="assistant",
+            content="read",
+            tool_calls=[
+                ToolCall(
+                    id="1",
+                    name="read_file",
+                    arguments={"path": "pkg/target.py"},
+                )
+            ],
+        ),
+        Message(role="user", content="keep"),
+    ]
+    provider = ScriptedProvider(turns=[ScriptedTurn(content="SUM")])
+    compaction = Compaction(provider, max_chars=1, keep_last=1)
+
+    run(compaction.apply(messages))
+
+    body = provider.calls[0]["messages"][0]["content"]
+    assert "read_file" in body
+    assert "pkg/target.py" in body
+
+
 def test_no_prefix_does_not_call_provider() -> None:
     messages = [Message(role="user", content="x" * 100)]
     provider = ScriptedProvider(turns=[ScriptedTurn(content="SHOULD_NOT_RUN")])

@@ -43,14 +43,18 @@ class EditFile:
         if not target.is_file():
             if old_string == "":
                 target.parent.mkdir(parents=True, exist_ok=True)
-                target.write_text(new_string, encoding="utf-8")
+                target.write_text(new_string, encoding="utf-8", newline="")
                 return ""
             return _ONCE_ERROR
         if old_string == "":
             return _EMPTY_EXISTS_ERROR
-        content = target.read_text(encoding="utf-8")
+        content = target.read_text(encoding="utf-8", newline="")
         count = content.count(old_string)
         if count != 1:
             return _ONCE_ERROR
-        target.write_text(content.replace(old_string, new_string, 1), encoding="utf-8")
+        target.write_text(
+            content.replace(old_string, new_string, 1),
+            encoding="utf-8",
+            newline="",
+        )
         return ""

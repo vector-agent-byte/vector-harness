@@ -4,7 +4,7 @@ import argparse
 import asyncio
 import os
 import sys
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping
 from pathlib import Path
 from uuid import uuid4
 
@@ -55,15 +55,15 @@ def build_agent(
     transforms: list = []
     if compact:
         transforms.append(Compaction(provider, max_chars=80000, keep_last=8))
+    delegate = None
     if subagents:
-        tools.append(
-            delegate_tool(
-                provider=provider,
-                tools=list(tools),
-                system=system,
-                context_transforms=transforms,
-            )
+        delegate = delegate_tool(
+            provider=provider,
+            tools=list(tools),
+            system=system,
+            context_transforms=transforms,
         )
+        tools.append(delegate)
     loop = Loop(
         provider=provider,
         tools=tools,
@@ -72,6 +72,8 @@ def build_agent(
         context_transforms=transforms,
         max_steps=max_steps,
     )
+    if delegate is not None:
+        delegate.host = loop
     if plan:
         return PlanThenExecute(loop)
     return loop
@@ -130,26 +132,28 @@ def _on_event(event: ProviderEvent) -> None:
         sys.stdout.flush()
 
 
-def _task_texts(task: list[str], stdin_lines: list[str] | None) -> list[str]:
+def _task_source(task: list[str], stdin_lines: Iterable[str] | None):
     joined = " ".join(task).strip()
     if joined:
-        return [joined]
-    texts: list[str] = []
+        yield joined
+        return
     source = stdin_lines if stdin_lines is not None else sys.stdin
     for line in source:
         text = line.strip()
         if not text:
             continue
         if text == "/exit":
-            break
-        texts.append(text)
-    return texts
+            return
+        yield text
 
 
-async def _run_texts(agent, texts: list[str]):
+async def _run_source(agent, source):
     result = None
-    for text in texts:
+    for text in source:
         result = await agent.run(text)
+        if result.text and not result.text.endswith("\n"):
+            sys.stdout.write("\n")
+            sys.stdout.flush()
         if result.status != "complete":
             return result
     return result
@@ -159,7 +163,7 @@ def main(
     argv: list[str] | None = None,
     environ: Mapping[str, str] | None = None,
     provider=None,
-    stdin_lines: list[str] | None = None,
+    stdin_lines: Iterable[str] | None = None,
 ) -> int:
     args = _parser().parse_args(argv)
     workspace = Path(args.workspace)
@@ -200,11 +204,8 @@ def main(
     )
     loop = agent.loop if isinstance(agent, PlanThenExecute) else agent
     loop.on_event = _on_event
-    texts = _task_texts(args.task, stdin_lines)
-    if not texts:
-        return 0
-    result = asyncio.run(_run_texts(agent, texts))
-    if result.status == "complete":
+    result = asyncio.run(_run_source(agent, _task_source(args.task, stdin_lines)))
+    if result is None or result.status == "complete":
         return 0
     return 1
 

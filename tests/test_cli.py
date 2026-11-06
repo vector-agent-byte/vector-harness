@@ -266,6 +266,144 @@ def test_shell_command_is_printed_before_execute(tmp_path: Path, monkeypatch):
     assert code == 0
 
 
+def test_interactive_run_starts_before_the_next_line_is_read(tmp_path: Path, monkeypatch):
+    from vector_harness.cli import main
+    from vector_harness.core.loop import Loop
+
+    workspace = tmp_path / "ws"
+    workspace.mkdir()
+    buffer = io.StringIO()
+    monkeypatch.setattr(sys, "stdout", buffer)
+
+    class PullCounter:
+        def __init__(self, items: list[str]) -> None:
+            self.items = items
+            self.pulled = 0
+
+        def __iter__(self):
+            return self
+
+        def __next__(self) -> str:
+            if self.pulled == 1:
+                assert "REPLY_ONE" in buffer.getvalue()
+            if self.pulled >= len(self.items):
+                raise StopIteration
+            item = self.items[self.pulled]
+            self.pulled += 1
+            return item
+
+    lines = PullCounter(["first task", "later task", "/exit"])
+    original = Loop.run
+
+    async def wrapped(self, user_text: str):
+        if user_text == "first task":
+            assert lines.pulled == 1
+        return await original(self, user_text)
+
+    monkeypatch.setattr(Loop, "run", wrapped)
+    provider = ScriptedProvider(
+        turns=[
+            ScriptedTurn(content="REPLY_ONE"),
+            ScriptedTurn(content="REPLY_TWO"),
+        ]
+    )
+    code = main(
+        ["--workspace", str(workspace)],
+        environ={},
+        provider=provider,
+        stdin_lines=lines,
+    )
+    assert code == 0
+    assert [call["messages"][-1]["content"] for call in provider.calls] == [
+        "first task",
+        "later task",
+    ]
+    assert all(
+        "/exit" not in message["content"]
+        for call in provider.calls
+        for message in call["messages"]
+    )
+
+
+def test_plan_and_child_events_reach_the_same_callback(tmp_path: Path, monkeypatch):
+    import asyncio
+
+    from vector_harness.cli import build_agent
+    from vector_harness.core.session import Session
+
+    workspace = tmp_path / "ws"
+    workspace.mkdir()
+    seen: list = []
+    saw_shell = False
+
+    class ProbeShell:
+        def __init__(self, root: Path, timeout: int = 120, max_output: int = 8000) -> None:
+            self.root = root
+            self.name = "shell"
+            self.description = "Run a shell command inside the workspace."
+            self.parameters = {
+                "type": "object",
+                "properties": {"command": {"type": "string"}},
+                "required": ["command"],
+            }
+
+        async def execute(self, arguments: dict) -> str:
+            nonlocal saw_shell
+            ends = [
+                event
+                for event in seen
+                if event.kind == "tool_call_end" and event.name == "shell"
+            ]
+            assert ends
+            assert ends[0].arguments["command"] == "echo hi"
+            assert any(
+                event.kind == "text_delta" and event.text == '{"steps":["run"]}'
+                for event in seen
+            )
+            child_calls = [
+                call
+                for call in provider.calls
+                if "shell" in call["tools"] and "delegate" not in call["tools"]
+            ]
+            assert child_calls
+            saw_shell = True
+            return "ok"
+
+    monkeypatch.setattr("vector_harness.cli.Shell", ProbeShell)
+    provider = ScriptedProvider(
+        turns=[
+            ScriptedTurn(content='{"steps":["run"]}'),
+            ScriptedTurn(
+                tool_calls=[
+                    ToolCall(
+                        id="d1",
+                        name="delegate",
+                        arguments={"task": "do shell"},
+                    )
+                ]
+            ),
+            ScriptedTurn(
+                tool_calls=[
+                    ToolCall(id="s1", name="shell", arguments={"command": "echo hi"})
+                ]
+            ),
+            ScriptedTurn(content="child-done"),
+            ScriptedTurn(content="parent-done"),
+        ]
+    )
+    agent = build_agent(
+        provider=provider,
+        workspace=workspace,
+        session=Session.in_memory(),
+        plan=True,
+        subagents=True,
+    )
+    agent.loop.on_event = seen.append
+    result = asyncio.run(agent.run("go"))
+    assert result.status == "complete"
+    assert saw_shell
+
+
 def test_stdin_stops_at_exit_and_skips_the_rest(tmp_path: Path):
     from vector_harness.cli import main
 

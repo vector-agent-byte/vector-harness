@@ -133,6 +133,12 @@ async def _parse_sse(response: httpx.Response) -> AsyncIterator[ProviderEvent]:
             chunk = json.loads(data)
         except json.JSONDecodeError:
             continue
+        error = chunk.get("error")
+        if isinstance(error, dict):
+            message = error.get("message", "")
+            if not isinstance(message, str):
+                message = str(message)
+            raise ProviderError(message or json.dumps(error))
         choices = chunk.get("choices") or []
         if not choices:
             continue

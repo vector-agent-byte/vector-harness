@@ -44,6 +44,8 @@ class ReadFile:
             return _PATH_ERROR
         offset = int(arguments.get("offset", 1))
         limit = int(arguments.get("limit", 200))
+        if offset < 1 or limit < 1:
+            return _OFFSET_ERROR
         text = target.read_text(encoding="utf-8")
         lines = text.splitlines()
         start = offset - 1

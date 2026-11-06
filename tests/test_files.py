@@ -68,6 +68,18 @@ def test_read_truncates_after_200_lines(tmp_path: Path):
     assert result.endswith("\n...[truncated, more lines remain]")
 
 
+def test_read_offset_zero_returns_error_and_leaves_bytes(tmp_path: Path):
+    root = tmp_path / "root"
+    root.mkdir()
+    path = root / "two.txt"
+    path.write_bytes(b"one\ntwo\n")
+    before = path.read_bytes()
+    tool = ReadFile(root)
+    result = run(tool.execute({"path": "two.txt", "offset": 0}))
+    assert result == "Error: offset out of range"
+    assert path.read_bytes() == before
+
+
 def test_read_offset_out_of_range(tmp_path: Path):
     root = tmp_path / "root"
     root.mkdir()
@@ -127,6 +139,21 @@ def test_edit_create_file_when_missing_and_empty_old_string(tmp_path: Path):
     )
     assert not str(result).startswith("Error:")
     assert (root / "nested" / "new.txt").read_text(encoding="utf-8") == "created content"
+
+
+def test_edit_preserves_lf_bytes_outside_replacement(tmp_path: Path):
+    root = tmp_path / "root"
+    root.mkdir()
+    path = root / "lf.txt"
+    path.write_bytes(b"alpha\nbeta\n")
+    tool = EditFile(root)
+    result = run(
+        tool.execute({"path": "lf.txt", "old_string": "alpha", "new_string": "ALPHA"})
+    )
+    assert result == ""
+    raw = path.read_bytes()
+    assert raw == b"ALPHA\nbeta\n"
+    assert b"\r\n" not in raw
 
 
 def test_edit_single_replacement(tmp_path: Path):
