@@ -54,25 +54,31 @@ class OpenAICompatibleProvider:
             "model": self.model,
             "stream": True,
             "messages": _messages_payload(system, messages),
-            "tools": [_tool_payload(tool) for tool in tools],
         }
+        if tools:
+            payload["tools"] = [_tool_payload(tool) for tool in tools]
 
         for attempt in range(1, self.max_attempts + 1):
             retry_status: int | None = None
-            async with httpx.AsyncClient(transport=self.transport) as client:
-                async with client.stream(
-                    "POST", url, headers=headers, json=payload
-                ) as response:
-                    status = response.status_code
-                    if 400 <= status < 500 and status != 429:
-                        await response.aread()
-                        raise ProviderError(f"HTTP {status}")
-                    if status == 429 or status >= 500:
-                        await response.aread()
-                        retry_status = status
-                    else:
-                        async for event in _parse_sse(response):
-                            yield event
+            try:
+                async with httpx.AsyncClient(
+                    transport=self.transport, timeout=120
+                ) as client:
+                    async with client.stream(
+                        "POST", url, headers=headers, json=payload
+                    ) as response:
+                        status = response.status_code
+                        if 400 <= status < 500 and status != 429:
+                            await response.aread()
+                            raise ProviderError(f"HTTP {status}")
+                        if status == 429 or status >= 500:
+                            await response.aread()
+                            retry_status = status
+                        else:
+                            async for event in _parse_sse(response):
+                                yield event
+            except (httpx.TimeoutException, httpx.TransportError) as exc:
+                raise ProviderError(str(exc)) from exc
             if retry_status is None:
                 return
             if attempt >= self.max_attempts:

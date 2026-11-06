@@ -405,3 +405,22 @@ def test_loop_runtime_error_propagates():
     )
     with pytest.raises(RuntimeError, match="boom"):
         asyncio.run(loop.run("hello"))
+
+
+def test_empty_tools_omits_tools_key():
+    handler = RecordedHandler(
+        [sse_response({"choices": [{"index": 0, "delta": {"content": "ok"}}]})]
+    )
+    provider, _ = make_provider(handler)
+    collect(provider, tools=[])
+    body = json.loads(handler.requests[0].content)
+    assert "tools" not in body
+
+
+def test_read_timeout_raises_provider_error():
+    def handler(request: httpx.Request) -> httpx.Response:
+        raise httpx.ReadTimeout("slow first token")
+
+    provider, _ = make_provider(handler)
+    with pytest.raises(ProviderError, match="slow first token"):
+        collect(provider)
