@@ -216,27 +216,36 @@ def _tool_detail(name: str, arguments) -> str:
     return " ".join(parts)
 
 
-def _think_head(*, color: bool) -> str:
-    """思考段的行首：时刻和 [think]。正文紧跟在后面。"""
+def _child_mark(*, color: bool) -> str:
+    """子代理标记。只加在子循环的事件上。"""
+    return _paint("[child]", _NAME, color=color) + " "
+
+
+def _think_head(*, color: bool, origin: str = "") -> str:
+    """思考段的行首：时刻和 [think]。子代理在中间多一个 [child]。"""
     stamp = _now().strftime("%H:%M:%S")
+    mark = _child_mark(color=color) if origin == "child" else ""
     return (
         f"{_paint(stamp, _DIM, color=color)} "
+        f"{mark}"
         f"{_paint('[think]', _THINK_TAG, color=color)} "
     )
 
 
-def _tool_line(name: str, detail: str, *, color: bool) -> str:
-    """一行一个工具调用：时刻、[tool]、对齐后的名字、参数。"""
+def _tool_line(name: str, detail: str, *, color: bool, origin: str = "") -> str:
+    """一行一个工具调用：时刻、[tool]、对齐后的名字、参数。子代理带 [child]。"""
     stamp = _now().strftime("%H:%M:%S")
     padded = name.ljust(_NAME_WIDTH)
+    mark = _child_mark(color=color) if origin == "child" else ""
     head = (
         f"{_paint(stamp, _DIM, color=color)} "
+        f"{mark}"
         f"{_paint('[tool]', _TAG, color=color)} "
         f"{_paint(padded, _NAME, color=color)} "
     )
     lines = detail.splitlines() or [""]
     rows = [head + _paint(lines[0], _DETAIL, color=color)]
-    gutter = " " * _GUTTER
+    gutter = " " * (_GUTTER + (len("[child] ") if origin == "child" else 0))
     for extra in lines[1:]:
         rows.append(gutter + _paint(extra, _DETAIL, color=color))
     return "\n".join(rows) + "\n"
@@ -253,6 +262,7 @@ class _Printer:
         self.line_open = False
         self.after_tool = False
         self.thinking = False
+        self.child_reply = False
 
     def _write(self, text: str) -> None:
         self.stream.write(text)
@@ -276,21 +286,31 @@ class _Printer:
             if not self.thinking:
                 if self.line_open:
                     self._write("\n")
-                self._write(_think_head(color=self.color))
+                self.child_reply = False
+                self._write(_think_head(color=self.color, origin=event.origin))
                 self.thinking = True
             self._write(_paint(event.text, _THINK_TEXT, color=self.color))
             self.line_open = not event.text.endswith("\n")
         elif event.kind == "text_delta" and event.text:
             self._end_thinking()
+            if event.origin != "child" and self.child_reply:
+                if self.line_open:
+                    self._write("\n")
+                    self.line_open = False
+                self.child_reply = False
             # 工具行之后空一行，避免模型回复贴在参数下面。
             if self.after_tool:
                 self._write("\n")
                 self.after_tool = False
                 self.line_open = False
+            if event.origin == "child" and not self.child_reply:
+                self._write(_child_mark(color=self.color))
+                self.child_reply = True
             self._write(event.text)
             self.line_open = not event.text.endswith("\n")
         elif event.kind == "tool_call_end" and event.name:
             self._end_thinking()
+            self.child_reply = False
             if self.line_open:
                 self._write("\n")
             self._write(
@@ -298,6 +318,7 @@ class _Printer:
                     event.name,
                     _tool_detail(event.name, event.arguments),
                     color=self.color,
+                    origin=event.origin,
                 )
             )
             self.line_open = False

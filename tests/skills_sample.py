@@ -31,6 +31,14 @@ SYSTEM = """你是工作目录里的助手。路径只能用相对路径。
 回答用中文。"""
 
 
+class PrintHook:
+    """用户自己的执行前钩子。这里只打印工具名，不改参数，也不拒绝。"""
+
+    async def before_execute(self, call, messages):
+        print(f"\n[hook] {call.name}", flush=True)
+        return None
+
+
 def on_event(event: ProviderEvent) -> None:
     """边生成边打印，并在工具真正执行前打出调用。"""
     if event.kind == "text_delta" and event.text:
@@ -70,9 +78,10 @@ def main() -> None:
         skills_dir=SKILLS_DIR,
         plan=True,
         reflect=True,
+        tool_hooks=[PrintHook()],
+        on_event=on_event,
         max_steps=12,
     )
-    agent.loop.on_event = on_event
     if "- greet:" not in agent.system_prompt:
         print("demo/skills 里没有可用的 greet 技能", file=sys.stderr)
         raise SystemExit(1)

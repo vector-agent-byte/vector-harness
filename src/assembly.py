@@ -77,6 +77,7 @@ def apply_patterns(
             tools=child_tools,
             system=loop.system,
             context_transforms=loop.context_transforms,
+            tool_hooks=loop.tool_hooks,
             max_steps=child_max_steps,
         )
         _replace_tool(loop, delegate)

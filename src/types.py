@@ -71,7 +71,7 @@ class ProviderEvent:
     ``tool_call_end``、``run_end``。这是终端的观察口，不是模式插件。
     ``thinking_delta`` 是模型的思考过程，只给观察方看，不写入会话。
     ``tool_call_start`` 的 ``arguments`` 保持 ``None``，参数要等
-    ``tool_call_end`` 才完整。
+    ``tool_call_end`` 才完整。``origin`` 为空是当前循环，``child`` 是子代理。
     """
 
     kind: str
@@ -79,6 +79,7 @@ class ProviderEvent:
     name: str = ""
     tool_call_id: str = ""
     arguments: dict | None = None
+    origin: str = ""
 
 
 # 可以 isinstance 检查。循环按这些字段调用，工具不必继承某个基类。
@@ -110,4 +111,32 @@ class ContextTransform(Protocol):
 
     async def apply(self, messages: list[Message]) -> list[Message]:
         """返回这一步实际送给模型的消息列表。"""
+        ...
+
+
+@dataclass
+class ToolHookResult:
+    """一次执行前钩子的决定。
+
+    ``arguments`` 不是 None 时，用这份参数替换该次调用。
+    ``deny`` 是非空字符串时不执行工具，这段文字成为失败的工具消息。
+    两者都是 None，或钩子直接返回 None，表示原样放行。
+    """
+
+    arguments: dict | None = None
+    deny: str | None = None
+
+
+# 和 ContextTransform 一样，只约定方法。核心不附带具体策略。
+@runtime_checkable
+class ToolHook(Protocol):
+    """工具执行前的钩子。
+
+    看见这一次调用和当前会话消息，看不见 system。
+    """
+
+    async def before_execute(
+        self, call: ToolCall, messages: list[Message]
+    ) -> ToolHookResult | None:
+        """返回放行、改参数或拒绝。返回 None 表示不改、不拒绝。"""
         ...

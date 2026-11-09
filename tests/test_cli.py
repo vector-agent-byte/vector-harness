@@ -361,6 +361,46 @@ def test_shell_command_is_printed_before_execute(tmp_path: Path, monkeypatch):
     assert seen["before"] == "17:01:03 [tool] shell        echo hi\n"
 
 
+def test_child_events_are_marked(tmp_path: Path, monkeypatch):
+    from vector_harness.cli import main
+
+    workspace = tmp_path / "ws"
+    workspace.mkdir()
+    buffer = io.StringIO()
+    monkeypatch.setattr(sys, "stdout", buffer)
+    monkeypatch.setattr(
+        "vector_harness.cli._now", lambda: datetime(2026, 11, 9, 17, 37, 38)
+    )
+    provider = ScriptedProvider(
+        turns=[
+            ScriptedTurn(
+                tool_calls=[
+                    ToolCall(id="d1", name="delegate", arguments={"task": "list files"})
+                ]
+            ),
+            ScriptedTurn(
+                thinking="use dir",
+                tool_calls=[
+                    ToolCall(id="s1", name="shell", arguments={"command": "echo hi"})
+                ],
+            ),
+            ScriptedTurn(content="notes.txt"),
+            ScriptedTurn(content="parent.txt"),
+        ]
+    )
+    code = main(
+        ["--workspace", str(workspace), "--subagents", "list"],
+        environ={},
+        provider=provider,
+    )
+    assert code == 0
+    output = buffer.getvalue()
+    assert "17:37:38 [tool] delegate     list files\n" in output
+    assert "17:37:38 [child] [think] use dir" in output
+    assert "17:37:38 [child] [tool] shell        echo hi\n" in output
+    assert "[child] notes.txt\nparent.txt" in output
+
+
 def test_color_paints_reply_and_shell_command(tmp_path: Path, monkeypatch):
     from vector_harness.cli import main
 

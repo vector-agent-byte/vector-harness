@@ -23,6 +23,7 @@ from vector_harness.types import (
     RunResult,
     Tool,
     ToolCall,
+    ToolHook,
 )
 
 
@@ -63,13 +64,54 @@ class Loop:
     session: Session
     system: str
     context_transforms: list[ContextTransform] | None = None
+    tool_hooks: list[ToolHook] | None = None
     on_event: Callable[[ProviderEvent], None] | None = None
     max_steps: int = 25
 
     def __post_init__(self) -> None:
-        """没传入变换时用空列表，后面就可以直接遍历。"""
+        """没传入变换或钩子时用空列表，后面就可以直接遍历。"""
         if self.context_transforms is None:
             self.context_transforms = []
+        if self.tool_hooks is None:
+            self.tool_hooks = []
+
+    def _persist_tool_arguments(self, call: ToolCall) -> None:
+        """把改写后的参数写回含有这次调用的助手消息。"""
+        messages = self.session.load()
+        for message in reversed(messages):
+            if message.role != "assistant" or not message.tool_calls:
+                continue
+            for stored in message.tool_calls:
+                if stored.id != call.id:
+                    continue
+                stored.arguments = dict(call.arguments)
+                self.session.replace_all(messages)
+                return
+
+    async def _prepare_tool_call(self, call: ToolCall) -> tuple[ToolCall, str | None]:
+        """按顺序跑执行前钩子。返回的文本不是 None 时不要执行工具。"""
+        current = call
+        for hook in self.tool_hooks or []:
+            try:
+                result = await hook.before_execute(current, self.session.load())
+                if result is None:
+                    continue
+                new_arguments = result.arguments
+                deny = result.deny
+            except Exception as exc:
+                return current, str(exc)
+            if new_arguments is not None:
+                if not isinstance(new_arguments, dict):
+                    return current, f"Error: invalid arguments for {current.name}"
+                current = ToolCall(
+                    id=current.id,
+                    name=current.name,
+                    arguments=new_arguments,
+                )
+                self._persist_tool_arguments(current)
+            if deny:
+                return current, deny
+        return current, None
 
     def _emit(self, event: ProviderEvent) -> None:
         """有观察回调时立刻送出事件。没有回调就什么也不做。"""
@@ -198,15 +240,26 @@ class Loop:
                         )
                     )
                 else:
+                    current, failure = await self._prepare_tool_call(tc)
+                    if failure is not None:
+                        self.session.append(
+                            Message(
+                                role="tool",
+                                content=failure,
+                                tool_call_id=current.id,
+                                is_error=True,
+                            )
+                        )
+                        continue
                     try:
-                        output = await tool_map[tc.name].execute(tc.arguments)
+                        output = await tool_map[current.name].execute(current.arguments)
                     except Exception as exc:
                         # 工具失败写成一条结果，循环继续，让模型自己处理。
                         self.session.append(
                             Message(
                                 role="tool",
                                 content=str(exc),
-                                tool_call_id=tc.id,
+                                tool_call_id=current.id,
                                 is_error=True,
                             )
                         )
@@ -216,7 +269,7 @@ class Loop:
                             Message(
                                 role="tool",
                                 content=output,
-                                tool_call_id=tc.id,
+                                tool_call_id=current.id,
                                 is_error=False,
                             )
                         )

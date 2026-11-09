@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from dataclasses import dataclass, field
+
 from vector_harness import Calculator, ProviderError, VectorHarness
 from tests.scripted import ScriptedProvider, ScriptedTurn
 from vector_harness.types import ToolCall
@@ -125,3 +127,118 @@ def test_calculator_evaluates_arithmetic():
     assert asyncio.run(tool.execute({"expression": "(2 + 3) * 4"})) == "20"
     rejected = asyncio.run(tool.execute({"expression": "__import__('os').system('echo hi')"}))
     assert rejected.startswith("Error:")
+
+
+@dataclass
+class CountingReadTool:
+    name: str = "read_file"
+    description: str = "Reads a file"
+    parameters: dict = field(default_factory=dict)
+    calls: int = 0
+
+    async def execute(self, arguments: dict) -> str:
+        self.calls += 1
+        return "contents"
+
+
+@dataclass
+class CountingHook:
+    calls: int = 0
+
+    async def before_execute(self, call, messages):
+        self.calls += 1
+        return None
+
+
+def test_harness_tool_hooks_default_empty():
+    agent = VectorHarness(name="AI助手", llm=object(), system_prompt="sys")
+    assert agent.loop.tool_hooks == []
+
+
+def test_harness_shares_tool_hooks_with_delegate():
+    hooks: list = []
+    agent = VectorHarness(
+        name="AI助手",
+        llm=object(),
+        system_prompt="sys",
+        tool_hooks=hooks,
+        subagents=True,
+    )
+    delegate = next(tool for tool in agent.loop.tools if tool.name == "delegate")
+    assert delegate.tool_hooks is agent.loop.tool_hooks
+    assert delegate.tool_hooks is hooks
+
+
+def test_plan_runs_tool_hooks_on_the_same_loop():
+    hook = CountingHook()
+    provider = ScriptedProvider(
+        turns=[
+            ScriptedTurn(content='{"steps": ["read"]}'),
+            ScriptedTurn(
+                tool_calls=[ToolCall(id="1", name="read_file", arguments={"path": "x"})]
+            ),
+            ScriptedTurn(content="done"),
+        ]
+    )
+    agent = VectorHarness(
+        name="AI助手",
+        llm=provider,
+        system_prompt="sys",
+        tools=[CountingReadTool()],
+        tool_hooks=[hook],
+        plan=True,
+    )
+
+    assert agent.run("read") == "done"
+    assert hook.calls == 1
+
+
+def test_reflect_runs_tool_hooks_on_the_same_loop():
+    hook = CountingHook()
+    provider = ScriptedProvider(
+        turns=[
+            ScriptedTurn(
+                tool_calls=[ToolCall(id="1", name="read_file", arguments={"path": "x"})]
+            ),
+            ScriptedTurn(content="done"),
+            ScriptedTurn(content='{"ok": true}'),
+        ]
+    )
+    agent = VectorHarness(
+        name="AI助手",
+        llm=provider,
+        system_prompt="sys",
+        tools=[CountingReadTool()],
+        tool_hooks=[hook],
+        reflect=True,
+    )
+
+    assert agent.run("read") == "done"
+    assert hook.calls == 1
+
+
+def test_constructor_on_event_is_used_by_plan_and_loop():
+    seen = []
+
+    def record(event):
+        seen.append(event)
+
+    provider = ScriptedProvider(
+        turns=[
+            ScriptedTurn(content='{"steps": ["read"]}'),
+            ScriptedTurn(content="done"),
+        ]
+    )
+    agent = VectorHarness(
+        name="AI助手",
+        llm=provider,
+        system_prompt="sys",
+        on_event=record,
+        plan=True,
+    )
+
+    assert agent.loop.on_event is record
+    assert agent.run("go") == "done"
+    texts = [event.text for event in seen if event.kind == "text_delta"]
+    assert '{"steps": ["read"]}' in texts
+    assert "done" in texts

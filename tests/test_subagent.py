@@ -147,3 +147,70 @@ def test_max_steps_one_echo_loop_prefixes_status() -> None:
     assert tool_messages[0].content.startswith("[max_steps]")
     child_calls = [c for c in provider.calls if "delegate" not in c["tools"]]
     assert len(child_calls) == 1
+
+
+def test_delegate_keeps_the_same_hook_list() -> None:
+    hooks: list = []
+    delegate = delegate_tool(
+        provider=object(),
+        tools=[],
+        system="s",
+        tool_hooks=hooks,
+    )
+    assert delegate.tool_hooks is hooks
+
+
+def test_child_hook_sees_child_messages_only() -> None:
+    echo = EchoTool()
+
+    class Remember:
+        def __init__(self) -> None:
+            self.seen: list[tuple[str, list[str]]] = []
+
+        async def before_execute(self, call, messages):
+            self.seen.append((call.name, [message.content for message in messages]))
+            return None
+
+    hook = Remember()
+    provider = ScriptedProvider(
+        turns=[
+            ScriptedTurn(
+                tool_calls=[
+                    ToolCall(
+                        id="d1",
+                        name="delegate",
+                        arguments={"task": "CHILD-TASK"},
+                    )
+                ]
+            ),
+            ScriptedTurn(
+                tool_calls=[
+                    ToolCall(id="e1", name="echo", arguments={"text": "hi"})
+                ]
+            ),
+            ScriptedTurn(content="child-done"),
+            ScriptedTurn(content="parent-done"),
+        ]
+    )
+    delegate = delegate_tool(
+        provider=provider,
+        tools=[echo],
+        system="child-sys",
+        tool_hooks=[hook],
+    )
+    loop = Loop(
+        provider=provider,
+        tools=[delegate],
+        session=Session.in_memory(),
+        system="parent-sys",
+        tool_hooks=[hook],
+    )
+
+    result = run(loop.run("PARENT"))
+
+    assert result.status == "complete"
+    assert echo.calls == 1
+    echo_calls = [contents for name, contents in hook.seen if name == "echo"]
+    assert echo_calls
+    assert any("CHILD-TASK" in content for content in echo_calls[0])
+    assert all("PARENT" not in content for content in echo_calls[0])

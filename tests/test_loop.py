@@ -8,6 +8,7 @@ import pytest
 
 from tests.scripted import ScriptedProvider, ScriptedTurn
 from vector_harness import Loop, Message, ProviderEvent, RunResult, Session, ToolCall
+from vector_harness.types import ToolHook, ToolHookResult
 
 
 @dataclass
@@ -102,6 +103,7 @@ def test_loop_defaults():
     assert loop.max_steps == 25
     assert loop.system == "sys"
     assert loop.context_transforms == []
+    assert loop.tool_hooks == []
     assert loop.tools == [ReadFileTool()]
 
 
@@ -346,3 +348,305 @@ def test_scripted_provider_runs_out_raises_assertion_error():
 
     with pytest.raises(AssertionError, match="no scripted turns left"):
         run(loop.run("go"))
+
+
+@dataclass
+class ArgumentRecordingTool:
+    name: str = "read_file"
+    description: str = "Reads a file"
+    parameters: dict = field(default_factory=dict)
+    seen: list = field(default_factory=list)
+
+    async def execute(self, arguments: dict) -> str:
+        self.seen.append(arguments)
+        return "ok"
+
+
+def _tool_then_text(*tool_calls: ToolCall, text: str = "done") -> ScriptedProvider:
+    return ScriptedProvider(
+        turns=[
+            ScriptedTurn(tool_calls=list(tool_calls)),
+            ScriptedTurn(content=text),
+        ]
+    )
+
+
+def test_tool_hook_result_defaults_and_protocol():
+    result = ToolHookResult()
+    assert result.arguments is None
+    assert result.deny is None
+
+    class Hook:
+        async def before_execute(self, call, messages):
+            return None
+
+    assert isinstance(Hook(), ToolHook)
+
+
+@dataclass
+class RecordingHook:
+    result: ToolHookResult | None = None
+    calls: list = field(default_factory=list)
+    messages: list = field(default_factory=list)
+    error: Exception | None = None
+
+    async def before_execute(self, call, messages):
+        self.calls.append(call)
+        self.messages.append(list(messages))
+        if self.error is not None:
+            raise self.error
+        return self.result
+
+
+def test_hook_none_allows_original_arguments():
+    tool = ArgumentRecordingTool()
+    hook = RecordingHook(result=None)
+    provider = _tool_then_text(ToolCall(id="1", name="read_file", arguments={"path": "x"}))
+    loop = Loop(
+        provider=provider,
+        tools=[tool],
+        session=Session.in_memory(),
+        system="SECRET",
+        tool_hooks=[hook],
+    )
+
+    result = run(loop.run("read"))
+
+    assert result.status == "complete"
+    assert tool.seen == [{"path": "x"}]
+    assert [message.role for message in hook.messages[0]] == ["user", "assistant"]
+    assert all("SECRET" not in message.content for message in hook.messages[0])
+
+
+def test_empty_hook_result_allows():
+    tool = ArgumentRecordingTool()
+    hook = RecordingHook(result=ToolHookResult())
+    provider = _tool_then_text(ToolCall(id="1", name="read_file", arguments={"path": "x"}))
+    loop = Loop(
+        provider=provider,
+        tools=[tool],
+        session=Session.in_memory(),
+        system="sys",
+        tool_hooks=[hook],
+    )
+
+    run(loop.run("read"))
+
+    assert tool.seen == [{"path": "x"}]
+
+
+def test_hook_rewrites_arguments_for_the_next_hook():
+    tool = ArgumentRecordingTool()
+    first = RecordingHook(result=ToolHookResult(arguments={"path": "y"}))
+    second = RecordingHook()
+    provider = _tool_then_text(ToolCall(id="1", name="read_file", arguments={"path": "x"}))
+    session = Session.in_memory()
+    loop = Loop(
+        provider=provider,
+        tools=[tool],
+        session=session,
+        system="sys",
+        tool_hooks=[first, second],
+    )
+
+    run(loop.run("read"))
+
+    assert second.calls[0].arguments == {"path": "y"}
+    assert tool.seen == [{"path": "y"}]
+    assistant = next(message for message in session.load() if message.tool_calls)
+    assert assistant.tool_calls[0].arguments == {"path": "y"}
+
+
+def test_hook_deny_skips_tool_and_later_hooks():
+    tool = ArgumentRecordingTool()
+    first = RecordingHook(result=ToolHookResult(deny="blocked"))
+    second = RecordingHook()
+    provider = _tool_then_text(
+        ToolCall(id="1", name="read_file", arguments={"path": "x"}),
+        text="done",
+    )
+    session = Session.in_memory()
+    loop = Loop(
+        provider=provider,
+        tools=[tool],
+        session=session,
+        system="sys",
+        tool_hooks=[first, second],
+    )
+
+    result = run(loop.run("read"))
+
+    assert result.status == "complete"
+    assert result.text == "done"
+    assert second.calls == []
+    assert tool.seen == []
+    tool_message = next(message for message in session.load() if message.role == "tool")
+    assert tool_message.is_error is True
+    assert tool_message.content == "blocked"
+
+
+def test_hook_deny_after_rewrite_persists_arguments():
+    tool = ArgumentRecordingTool()
+    hook = RecordingHook(result=ToolHookResult(arguments={"path": "y"}, deny="blocked"))
+    provider = _tool_then_text(ToolCall(id="1", name="read_file", arguments={"path": "x"}))
+    session = Session.in_memory()
+    loop = Loop(
+        provider=provider,
+        tools=[tool],
+        session=session,
+        system="sys",
+        tool_hooks=[hook],
+    )
+
+    run(loop.run("read"))
+
+    assert tool.seen == []
+    assistant = next(message for message in session.load() if message.tool_calls)
+    assert assistant.tool_calls[0].arguments == {"path": "y"}
+    tool_message = next(message for message in session.load() if message.role == "tool")
+    assert tool_message.content == "blocked"
+
+
+def test_hook_exception_is_a_failed_tool_message():
+    tool = ArgumentRecordingTool()
+    first = RecordingHook(error=RuntimeError("nope"))
+    second = RecordingHook()
+    provider = _tool_then_text(
+        ToolCall(id="1", name="read_file", arguments={"path": "x"}),
+        text="done",
+    )
+    session = Session.in_memory()
+    loop = Loop(
+        provider=provider,
+        tools=[tool],
+        session=session,
+        system="sys",
+        tool_hooks=[first, second],
+    )
+
+    result = run(loop.run("read"))
+
+    assert result.status == "complete"
+    assert second.calls == []
+    assert tool.seen == []
+    tool_message = next(message for message in session.load() if message.role == "tool")
+    assert tool_message.is_error is True
+    assert tool_message.content == "nope"
+
+
+def test_unknown_and_invalid_calls_skip_hooks():
+    cases = [
+        ToolCall(id="1", name="missing", arguments={"path": "x"}),
+        ToolCall(id="1", name="read_file", arguments=None),
+        ToolCall(id="1", name="read_file", arguments={"_invalid_json": "x"}),
+    ]
+    for call in cases:
+        tool = ArgumentRecordingTool()
+        hook = RecordingHook()
+        provider = _tool_then_text(call)
+        session = Session.in_memory()
+        loop = Loop(
+            provider=provider,
+            tools=[tool],
+            session=session,
+            system="sys",
+            tool_hooks=[hook],
+        )
+        run(loop.run("read"))
+        assert hook.calls == []
+        tool_message = next(message for message in session.load() if message.role == "tool")
+        assert tool_message.is_error is True
+
+
+def test_empty_deny_does_not_block():
+    tool = ArgumentRecordingTool()
+    hook = RecordingHook(result=ToolHookResult(deny=""))
+    provider = _tool_then_text(ToolCall(id="1", name="read_file", arguments={"path": "x"}))
+    loop = Loop(
+        provider=provider,
+        tools=[tool],
+        session=Session.in_memory(),
+        system="sys",
+        tool_hooks=[hook],
+    )
+
+    run(loop.run("read"))
+
+    assert tool.seen == [{"path": "x"}]
+
+
+def test_non_dict_rewrite_does_not_execute():
+    tool = ArgumentRecordingTool()
+    hook = RecordingHook(result=ToolHookResult(arguments=["nope"]))
+    provider = _tool_then_text(ToolCall(id="1", name="read_file", arguments={"path": "x"}))
+    session = Session.in_memory()
+    loop = Loop(
+        provider=provider,
+        tools=[tool],
+        session=session,
+        system="sys",
+        tool_hooks=[hook],
+    )
+
+    run(loop.run("read"))
+
+    assert tool.seen == []
+    tool_message = next(message for message in session.load() if message.role == "tool")
+    assert tool_message.content == "Error: invalid arguments for read_file"
+    assistant = next(message for message in session.load() if message.tool_calls)
+    assert assistant.tool_calls[0].arguments == {"path": "x"}
+
+
+def test_rewrite_persists_in_file_session(tmp_path: Path):
+    tool = ArgumentRecordingTool()
+    hook = RecordingHook(result=ToolHookResult(arguments={"path": "y"}))
+    path = tmp_path / "s.jsonl"
+    provider = _tool_then_text(ToolCall(id="1", name="read_file", arguments={"path": "x"}))
+    loop = Loop(
+        provider=provider,
+        tools=[tool],
+        session=Session(path=path),
+        system="sys",
+        tool_hooks=[hook],
+    )
+
+    run(loop.run("read"))
+
+    assistant = next(message for message in Session(path=path).load() if message.tool_calls)
+    assert assistant.tool_calls[0].arguments == {"path": "y"}
+
+
+def test_denying_one_call_still_runs_the_next():
+    tool = ArgumentRecordingTool()
+
+    class DenyFirst:
+        def __init__(self) -> None:
+            self.messages: list = []
+
+        async def before_execute(self, call, messages):
+            self.messages.append(list(messages))
+            if call.id == "1":
+                return ToolHookResult(deny="blocked")
+            return None
+
+    hook = DenyFirst()
+    provider = _tool_then_text(
+        ToolCall(id="1", name="read_file", arguments={"path": "a"}),
+        ToolCall(id="2", name="read_file", arguments={"path": "b"}),
+    )
+    session = Session.in_memory()
+    loop = Loop(
+        provider=provider,
+        tools=[tool],
+        session=session,
+        system="sys",
+        tool_hooks=[hook],
+    )
+
+    run(loop.run("read"))
+
+    assert tool.seen == [{"path": "b"}]
+    tool_messages = [message for message in session.load() if message.role == "tool"]
+    assert tool_messages[0].tool_call_id == "1"
+    assert tool_messages[0].is_error is True
+    assert any(message.tool_call_id == "1" for message in hook.messages[1])

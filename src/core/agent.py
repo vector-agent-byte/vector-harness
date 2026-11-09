@@ -8,12 +8,13 @@
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
 from vector_harness.core.loop import Loop
 from vector_harness.core.session import Session
-from vector_harness.types import Message, ProviderError, Tool
+from vector_harness.types import Message, ProviderError, ProviderEvent, Tool, ToolHook
 
 
 class VectorHarness:
@@ -37,6 +38,8 @@ class VectorHarness:
         plan: bool = False,
         reflect: bool = False,
         subagents: bool = False,
+        tool_hooks: list[ToolHook] | None = None,
+        on_event: Callable[[ProviderEvent], None] | None = None,
         max_chars: int = 80000,
         keep_last: int = 8,
         child_max_steps: int = 10,
@@ -53,6 +56,8 @@ class VectorHarness:
             tools=list(tools or []),
             session=self.session,
             system=system_prompt,
+            tool_hooks=tool_hooks,
+            on_event=on_event,
             max_steps=max_steps,
         )
         # 没装模式时 runner 就是工具循环。装配会把它换成计划或反思，run 走最外层。
