@@ -1,13 +1,14 @@
 """可嵌入的对话助手。
 
 包住现有的工具循环，给调用方一个同步的 ``run``。历史留在内存会话里，
-同一实例上的下一次 ``run`` 能看见之前的消息。工具用 ``add_tool`` 挂上，
-下一轮才会交给模型。
+同一实例上的下一次 ``run`` 能看见之前的消息。创建时就能传入工具和模式，
+之后还可以用 ``add_tool`` 或 ``attach`` 再补，下一轮才会交给模型。
 """
 
 from __future__ import annotations
 
 import asyncio
+from pathlib import Path
 from typing import Any
 
 from vector_harness.core.loop import Loop
@@ -29,6 +30,16 @@ class VectorHarness:
         llm: Any,
         system_prompt: str,
         session: Session | None = None,
+        tools: list[Tool] | None = None,
+        skills_dir: Path | None = None,
+        memory_path: Path | None = None,
+        compact: bool = False,
+        plan: bool = False,
+        reflect: bool = False,
+        subagents: bool = False,
+        max_chars: int = 80000,
+        keep_last: int = 8,
+        child_max_steps: int = 10,
         max_steps: int = 25,
     ) -> None:
         self.name = name
@@ -36,15 +47,39 @@ class VectorHarness:
         self.system_prompt = system_prompt
         # 不传会话时只留在内存，同一实例的下一次 run 仍能看见这些消息。
         self.session = session if session is not None else Session.in_memory()
+        # 复制一份，调用方之后改自己的列表不会影响助手。
         self.loop = Loop(
             provider=llm,
-            tools=[],
+            tools=list(tools or []),
             session=self.session,
             system=system_prompt,
             max_steps=max_steps,
         )
         # 没装模式时 runner 就是工具循环。装配会把它换成计划或反思，run 走最外层。
         self.runner = self.loop
+        # 这些阈值和 attach 的默认值相同。不打开任何模式时不加载模式包。
+        if (
+            skills_dir is not None
+            or memory_path is not None
+            or compact
+            or plan
+            or reflect
+            or subagents
+        ):
+            from vector_harness.assembly import attach
+
+            attach(
+                self,
+                skills_dir=skills_dir,
+                memory_path=memory_path,
+                compact=compact,
+                plan=plan,
+                reflect=reflect,
+                subagents=subagents,
+                max_chars=max_chars,
+                keep_last=keep_last,
+                child_max_steps=child_max_steps,
+            )
 
     def add_tool(self, tool: Tool) -> None:
         """登记一个工具。下一次 ``run`` 会把它放进模型请求。"""

@@ -31,6 +31,33 @@ def test_run_returns_text_and_keeps_history():
     assert provider.calls[0]["tools"] == []
 
 
+def test_constructor_tools_are_copied_and_add_tool_appends():
+    provider = ScriptedProvider(
+        turns=[
+            ScriptedTurn(
+                tool_calls=[
+                    ToolCall(id="1", name="calculator", arguments={"expression": "2 + 3 * 4"})
+                ]
+            ),
+            ScriptedTurn(content="14"),
+        ]
+    )
+    tools = [Calculator()]
+    agent = VectorHarness(
+        name="AI助手",
+        llm=provider,
+        system_prompt="算一下",
+        tools=tools,
+    )
+    tools.clear()
+    agent.add_tool(Calculator())
+
+    response = agent.run("请帮我计算 2 + 3 * 4")
+
+    assert response == "14"
+    assert provider.calls[0]["tools"] == ["calculator", "calculator"]
+
+
 def test_add_tool_is_available_on_the_next_run():
     provider = ScriptedProvider(
         turns=[

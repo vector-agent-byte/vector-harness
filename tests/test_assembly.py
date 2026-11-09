@@ -200,6 +200,47 @@ def test_attach_replaces_a_tool_with_the_same_name(tmp_path: Path):
     assert asyncio.run(tool.execute({"name": "greet"})) == "Hello\n"
 
 
+def test_constructor_attaches_skills_plan_and_reflect(tmp_path: Path):
+    skill = tmp_path / "greet.md"
+    skill.write_text(
+        "---\nname: greet\ndescription: Say hello\n---\nHello\n",
+        encoding="utf-8",
+        newline="\n",
+    )
+
+    agent = VectorHarness(
+        name="助手",
+        llm=object(),
+        system_prompt="原文",
+        skills_dir=tmp_path,
+        plan=True,
+        reflect=True,
+    )
+
+    assert "- greet:" in agent.system_prompt
+    assert agent.system_prompt == agent.loop.system
+    assert "read_skill" in _names(agent)
+    assert type(agent.runner).__name__ == "Reflect"
+    assert type(agent.runner.inner).__name__ == "PlanThenExecute"
+    assert agent.runner.loop is agent.loop
+
+
+def test_constructor_forwards_compact_thresholds():
+    agent = VectorHarness(
+        name="助手",
+        llm=object(),
+        system_prompt="原文",
+        compact=True,
+        max_chars=25,
+        keep_last=1,
+    )
+
+    compaction = agent.loop.context_transforms[0]
+    assert isinstance(compaction, Compaction)
+    assert compaction.max_chars == 25
+    assert compaction.keep_last == 1
+
+
 def test_plan_then_reflect_wraps_in_that_order():
     agent = _agent()
 

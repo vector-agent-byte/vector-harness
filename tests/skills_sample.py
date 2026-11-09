@@ -1,11 +1,11 @@
-"""完整样例：用 attach 加载技能目录。
+"""完整样例：创建助手时加载技能目录，并打开计划和反思。
 
 在仓库根目录运行：
 
     python tests/skills_sample.py
 
 这个文件不会被 pytest 收集。它会调用配置里的模型，并改写 demo/skill-sample。
-技能文件放在 demo/skills。索引由 attach 写进系统提示，正文要等模型调用 read_skill。
+技能文件放在 demo/skills。索引写进系统提示，正文要等模型调用 read_skill。
 """
 
 from __future__ import annotations
@@ -18,7 +18,6 @@ from vector_harness import (
     OpenAICompatibleProvider,
     ReadFile,
     VectorHarness,
-    attach,
 )
 from vector_harness.types import ProviderEvent
 
@@ -67,13 +66,13 @@ def main() -> None:
         name="技能助手",
         llm=OpenAICompatibleProvider(),
         system_prompt=SYSTEM,
+        tools=[ReadFile(WORKSPACE), EditFile(WORKSPACE)],
+        skills_dir=SKILLS_DIR,
+        plan=True,
+        reflect=True,
         max_steps=12,
     )
     agent.loop.on_event = on_event
-    agent.add_tool(ReadFile(WORKSPACE))
-    agent.add_tool(EditFile(WORKSPACE))
-    # attach(agent, skills_dir=SKILLS_DIR)
-    attach(agent, skills_dir=SKILLS_DIR, plan=True, reflect=True)
     if "- greet:" not in agent.system_prompt:
         print("demo/skills 里没有可用的 greet 技能", file=sys.stderr)
         raise SystemExit(1)

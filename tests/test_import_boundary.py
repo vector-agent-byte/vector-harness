@@ -70,6 +70,20 @@ def test_attach_import_is_lazy():
         _drop_pattern_modules()
 
 
+def test_plain_harness_does_not_load_patterns():
+    import sys
+
+    from vector_harness import VectorHarness
+
+    _drop_pattern_modules()
+    try:
+        VectorHarness(name="助手", llm=object(), system_prompt="原文")
+        assert "vector_harness.patterns" not in sys.modules
+        assert "vector_harness.assembly" not in sys.modules
+    finally:
+        _drop_pattern_modules()
+
+
 def test_package_root_does_not_import_patterns_or_cli():
     import sys
 
