@@ -47,6 +47,7 @@ model = "..."
 | **上下文压缩** | 会话变长时，把较早的消息折成一段摘要，保留最近若干条 |
 | **Skills** | 索引进提示，正文按名字读取 |
 | **先计划再执行** | 先要一份步骤列表，再进入工具循环 |
+| **反思** | 做完之后评判一次，不通过就只再执行一版 |
 | **子 agent** | 把一项任务交给一层子循环，子循环不能再派生子 agent |
 | **长期记忆** | 跨会话的 Markdown 文件，用工具追加事实 |
 
@@ -81,11 +82,11 @@ python -m pytest -q
 python -m vector_harness.cli --workspace . 读 README.md，用一句话说明这个项目做什么
 ```
 
-终端会打出模型的回复。不写任务则逐行对话，输入 `/exit` 结束。需要模式时加上 `--compact`、`--skills 目录`、`--plan`、`--subagents`、`--memory`。
+终端会打出模型的回复。不写任务则逐行对话，输入 `/exit` 结束。需要模式时加上 `--compact`、`--skills 目录`、`--plan`、`--reflect`、`--subagents`、`--memory`。
 
 ### 仓库状态
 
-目标已按上面写定。核心、五个模式和终端入口已实现。设计说明见 [docs/superpowers/specs/2026-11-06-agent-base-design.md](docs/superpowers/specs/2026-11-06-agent-base-design.md)。
+目标已按上面写定。核心、六个模式和终端入口已实现。设计说明见 [docs/superpowers/specs/2026-11-06-agent-base-design.md](docs/superpowers/specs/2026-11-06-agent-base-design.md)。
 
 ### 相关链接
 
@@ -134,6 +135,7 @@ Each pattern is its own module, wired explicitly by the caller or the CLI. All a
 | **Context compaction** | Fold older messages into a summary and keep a recent tail |
 | **Skills** | Put the index in the prompt; load a skill body by name |
 | **Plan then execute** | Ask for a step list, then run the tool loop |
+| **Reflection** | Judge the finished result once, and run one revision when it fails |
 | **Sub-agents** | Delegate one task to a child loop that cannot delegate again |
 | **Long-term memory** | A Markdown file across sessions, appended by a tool |
 
@@ -168,11 +170,11 @@ To call a model, write `~/.vector-harness/config.toml` (on Windows, `%USERPROFIL
 python -m vector_harness.cli --workspace . 读 README.md，用一句话说明这个项目做什么
 ```
 
-The terminal prints the model's reply. Omit the task to chat one line at a time, and type `/exit` to stop. Turn patterns on with `--compact`, `--skills <dir>`, `--plan`, `--subagents`, or `--memory`.
+The terminal prints the model's reply. Omit the task to chat one line at a time, and type `/exit` to stop. Turn patterns on with `--compact`, `--skills <dir>`, `--plan`, `--reflect`, `--subagents`, or `--memory`.
 
 ### Status
 
-The goals above are agreed. The core, five patterns, and terminal entry are implemented. See [docs/superpowers/specs/2026-11-06-agent-base-design.md](docs/superpowers/specs/2026-11-06-agent-base-design.md).
+The goals above are agreed. The core, six patterns, and terminal entry are implemented. See [docs/superpowers/specs/2026-11-06-agent-base-design.md](docs/superpowers/specs/2026-11-06-agent-base-design.md).
 
 ### Links
 
