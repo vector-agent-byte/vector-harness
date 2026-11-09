@@ -5,6 +5,12 @@ from tests.scripted import ScriptedProvider, ScriptedTurn
 from vector_harness.types import ToolCall
 
 
+def test_runner_starts_as_the_loop():
+    agent = VectorHarness(name="AI助手", llm=object(), system_prompt="sys")
+
+    assert agent.runner is agent.loop
+
+
 def test_run_returns_text_and_keeps_history():
     provider = ScriptedProvider(turns=[ScriptedTurn(content="我是助手")])
     agent = VectorHarness(

@@ -42,6 +42,7 @@ class VectorHarness:
             system=system_prompt,
             max_steps=max_steps,
         )
+        self.runner = self.loop
 
     def add_tool(self, tool: Tool) -> None:
         """登记一个工具。下一次 ``run`` 会把它放进模型请求。"""
@@ -53,7 +54,7 @@ class VectorHarness:
         模型失败或到达步数上限时抛出 ``ProviderError``。工具调用成功后，
         返回的是模型看到工具结果之后给出的那一段回复。
         """
-        result = asyncio.run(self.loop.run(user_text))
+        result = asyncio.run(self.runner.run(user_text))
         if result.status == "error":
             raise ProviderError(result.text)
         if result.status != "complete":

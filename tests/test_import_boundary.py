@@ -37,6 +37,39 @@ def imports_of(paths: list[Path]) -> list[str]:
     return sorted(offenders)
 
 
+def _drop_pattern_modules() -> None:
+    import sys
+
+    for name in list(sys.modules):
+        if (
+            name == "vector_harness.patterns"
+            or name.startswith("vector_harness.patterns.")
+            or name == "vector_harness.assembly"
+        ):
+            del sys.modules[name]
+
+
+def test_attach_import_is_lazy():
+    import sys
+
+    _drop_pattern_modules()
+    try:
+        import vector_harness
+
+        assert "vector_harness.patterns" not in sys.modules
+        assert "vector_harness.assembly" not in sys.modules
+        for name in list(sys.modules):
+            assert not name.startswith("vector_harness.patterns.")
+
+        from vector_harness import attach
+
+        assert attach.__name__ == "attach"
+        assert "vector_harness.patterns" in sys.modules
+        assert "vector_harness.assembly" in sys.modules
+    finally:
+        _drop_pattern_modules()
+
+
 def test_package_root_does_not_import_patterns_or_cli():
     import sys
 

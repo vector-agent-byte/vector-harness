@@ -1,0 +1,98 @@
+"""完整样例：用 attach 加载技能目录。
+
+在仓库根目录运行：
+
+    python tests/skills_sample.py
+
+这个文件不会被 pytest 收集。它会调用配置里的模型，并改写 demo/skill-sample。
+技能文件放在 demo/skills。索引由 attach 写进系统提示，正文要等模型调用 read_skill。
+"""
+
+from __future__ import annotations
+
+import sys
+from pathlib import Path
+
+from vector_harness import (
+    EditFile,
+    OpenAICompatibleProvider,
+    ReadFile,
+    VectorHarness,
+    attach,
+)
+from vector_harness.types import ProviderEvent
+
+ROOT = Path(__file__).resolve().parents[1]
+WORKSPACE = ROOT / "demo" / "skill-sample"
+SKILLS_DIR = ROOT / "demo" / "skills"
+SYSTEM = """你是工作目录里的助手。路径只能用相对路径。
+系统提示里只有技能索引。做技能描述的事之前，必须先调用 read_skill，按名字读出正文。
+写文件用 edit_file：文件不存在时 old_string 用空字符串。
+改已有文件前先用 read_file 读出原文，再替换唯一的一段。
+回答用中文。"""
+
+
+def on_event(event: ProviderEvent) -> None:
+    """边生成边打印，并在工具真正执行前打出调用。"""
+    if event.kind == "text_delta" and event.text:
+        print(event.text, end="", flush=True)
+    elif event.kind == "tool_call_end":
+        print(f"\n[tool] {event.name} {event.arguments}", flush=True)
+
+
+def show_history(agent: VectorHarness) -> None:
+    print("\n=== 历史 ===")
+    for index, message in enumerate(agent.get_history(), start=1):
+        detail = ""
+        if message.tool_calls:
+            calls = ", ".join(call.name for call in message.tool_calls)
+            detail = f" -> {calls}"
+        text = " ".join(message.content.split())
+        if len(text) > 160:
+            text = text[:157] + "..."
+        print(f"{index:02d}. {message.role}{detail}: {text}")
+
+
+def main() -> None:
+    if not SKILLS_DIR.is_dir():
+        print(f"技能目录不存在: {SKILLS_DIR}", file=sys.stderr)
+        raise SystemExit(1)
+
+    WORKSPACE.mkdir(parents=True, exist_ok=True)
+    hello = WORKSPACE / "hello.txt"
+    if hello.exists():
+        hello.unlink()
+
+    agent = VectorHarness(
+        name="技能助手",
+        llm=OpenAICompatibleProvider(),
+        system_prompt=SYSTEM,
+        max_steps=12,
+    )
+    agent.loop.on_event = on_event
+    agent.add_tool(ReadFile(WORKSPACE))
+    agent.add_tool(EditFile(WORKSPACE))
+    # attach(agent, skills_dir=SKILLS_DIR)
+    attach(agent, skills_dir=SKILLS_DIR, plan=True, reflect=True)
+    if "- greet:" not in agent.system_prompt:
+        print("demo/skills 里没有可用的 greet 技能", file=sys.stderr)
+        raise SystemExit(1)
+
+    print(f"工作目录: {WORKSPACE}")
+    print(f"技能目录: {SKILLS_DIR}\n")
+    print("=== 装配后的系统提示 ===")
+    print(agent.system_prompt)
+    print("\n=== 第一轮：按 greet 写文件 ===")
+    agent.run("按技能 greet 完成它描述的事。先读技能正文，再写文件。")
+
+    print("\n\n=== 第二轮：核对文件 ===")
+    agent.run("用 read_file 读出 hello.txt，只回答文件里的那一行。")
+
+    print("\n\n=== hello.txt ===")
+    print(hello.read_text(encoding="utf-8") if hello.is_file() else "(文件没有生成)")
+    show_history(agent)
+    print(f"\n历史消息数: {len(agent.get_history())}")
+
+
+if __name__ == "__main__":
+    main()

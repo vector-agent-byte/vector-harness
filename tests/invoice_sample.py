@@ -2,22 +2,16 @@
 
 在仓库根目录运行：
 
-    python src/test.py
+    python tests/invoice_sample.py
+
+这个文件不会被 pytest 收集。它会调用配置里的模型，并改写 demo/invoice-sample。
 """
 
 from __future__ import annotations
 
-import sys
-
-if __name__ == "__main__" and sys.path:
-    # 直接运行 src/test.py 时，src 会排在标准库前面，types.py 会挡住标准库的 types。
-    sys.path.pop(0)
-
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parents[1]
-
-from vector_harness import (  # noqa: E402
+from vector_harness import (
     Calculator,
     EditFile,
     OpenAICompatibleProvider,
@@ -25,8 +19,9 @@ from vector_harness import (  # noqa: E402
     Shell,
     VectorHarness,
 )
-from vector_harness.types import ProviderEvent  # noqa: E402
+from vector_harness.types import ProviderEvent
 
+ROOT = Path(__file__).resolve().parents[1]
 WORKSPACE = ROOT / "demo" / "invoice-sample"
 SYSTEM = """你是账单助手。工作目录里只能读写相对路径。
 算术必须调用 calculator，不要心算。

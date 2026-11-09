@@ -29,3 +29,12 @@ __all__ = [
     "Shell",
     "Calculator",
 ]
+
+
+def __getattr__(name: str):
+    """``attach`` 单独延迟导出，避免导入本包时加载模式。"""
+    if name == "attach":
+        from vector_harness.assembly import attach
+
+        return attach
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
