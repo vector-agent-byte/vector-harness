@@ -320,6 +320,8 @@ def test_shell_command_is_printed_before_execute(tmp_path: Path, monkeypatch):
     buffer = io.StringIO()
     monkeypatch.setattr(sys, "stdout", buffer)
 
+    seen: dict[str, str] = {}
+
     class ProbeShell:
         def __init__(self, root: Path, timeout: int = 120, max_output: int = 8000) -> None:
             self.root = root
@@ -332,7 +334,7 @@ def test_shell_command_is_printed_before_execute(tmp_path: Path, monkeypatch):
             }
 
         async def execute(self, arguments: dict) -> str:
-            assert "command: echo hi\n" in buffer.getvalue()
+            seen["before"] = buffer.getvalue()
             return "ok"
 
     monkeypatch.setattr("vector_harness.cli.Shell", ProbeShell)
@@ -352,6 +354,39 @@ def test_shell_command_is_printed_before_execute(tmp_path: Path, monkeypatch):
         provider=provider,
     )
     assert code == 0
+    assert seen["before"] == "  shell\n    echo hi\n"
+
+
+def test_color_paints_reply_and_shell_command(tmp_path: Path, monkeypatch):
+    from vector_harness.cli import main
+
+    workspace = tmp_path / "ws"
+    workspace.mkdir()
+    buffer = io.StringIO()
+    monkeypatch.setenv("VECTOR_COLOR", "always")
+    monkeypatch.delenv("NO_COLOR", raising=False)
+    monkeypatch.setattr(sys, "stdout", buffer)
+    provider = ScriptedProvider(
+        turns=[
+            ScriptedTurn(
+                content="hello",
+                tool_calls=[
+                    ToolCall(id="1", name="shell", arguments={"command": "echo hi"})
+                ],
+            ),
+            ScriptedTurn(content="done"),
+        ]
+    )
+    code = main(
+        ["--workspace", str(workspace), "run"],
+        environ={},
+        provider=provider,
+    )
+    assert code == 0
+    output = buffer.getvalue()
+    assert "\033[36mhello\033[0m" in output
+    assert "\033[1;36m  shell\033[0m\n\033[33m    echo hi\033[0m\n" in output
+    assert "\033[36mdone\033[0m\n" in output
 
 
 def test_interactive_run_starts_before_the_next_line_is_read(tmp_path: Path, monkeypatch):

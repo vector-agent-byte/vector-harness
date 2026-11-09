@@ -132,22 +132,101 @@ def _memory_path(
     return None
 
 
-def _on_event(event: ProviderEvent) -> None:
-    """边收边打印模型文本，并在 shell 执行前打出命令。"""
-    if event.kind == "text_delta":
-        if event.text:
-            sys.stdout.write(event.text)
-            sys.stdout.flush()
-            _on_event.line_open = not event.text.endswith("\n")
-    elif event.kind == "tool_call_end" and event.name == "shell":
-        arguments = event.arguments or {}
-        command = arguments.get("command", "") if isinstance(arguments, dict) else ""
-        # 模型文本常常不以换行结束，命令单独起一行。
-        if getattr(_on_event, "line_open", False):
-            sys.stdout.write("\n")
-        sys.stdout.write(f"command: {command}\n")
-        sys.stdout.flush()
-        _on_event.line_open = False
+_RESET = "\033[0m"
+_CYAN = "\033[36m"
+_SHELL = "\033[1;36m"
+_COMMAND = "\033[33m"
+
+
+def _color_enabled(stream) -> bool:
+    """``NO_COLOR`` 或 ``VECTOR_COLOR=never`` 关闭颜色。``always`` 强制打开，否则只在终端里上色。"""
+    if os.environ.get("NO_COLOR"):
+        return False
+    mode = os.environ.get("VECTOR_COLOR", "auto").strip().lower()
+    if mode in {"always", "1", "true", "yes"}:
+        return True
+    if mode in {"never", "0", "false", "no"}:
+        return False
+    isatty = getattr(stream, "isatty", None)
+    try:
+        return bool(isatty and isatty())
+    except OSError:
+        return False
+
+
+def _enable_windows_vt(stream) -> None:
+    """让 Windows 控制台解释 ANSI 颜色。管道和旧控制台保持原样。"""
+    if sys.platform != "win32":
+        return
+    fileno = getattr(stream, "fileno", None)
+    if fileno is None:
+        return
+    try:
+        fileno()
+    except (AttributeError, OSError, ValueError):
+        return
+    try:
+        import ctypes
+
+        kernel32 = ctypes.windll.kernel32
+        handle = kernel32.GetStdHandle(-11)
+        mode = ctypes.c_uint()
+        if kernel32.GetConsoleMode(handle, ctypes.byref(mode)):
+            kernel32.SetConsoleMode(handle, mode.value | 0x0004)
+    except (AttributeError, OSError):
+        return
+
+
+def _paint(text: str, code: str, *, color: bool) -> str:
+    """给一段文字套上颜色。不上色时原文返回。"""
+    if not color or not text:
+        return text
+    return f"{code}{text}{_RESET}"
+
+
+def _shell_block(command: str, *, color: bool) -> str:
+    """把一条命令排成带标签的两行。多行命令每一行都缩进。"""
+    label = _paint("  shell", _SHELL, color=color)
+    lines = command.splitlines() or [""]
+    body = "\n".join(_paint(f"    {line}", _COMMAND, color=color) for line in lines)
+    return f"{label}\n{body}\n"
+
+
+class _Printer:
+    """把模型文本和 shell 命令写到标准输出。"""
+
+    def __init__(self, stream) -> None:
+        self.stream = stream
+        self.color = _color_enabled(stream)
+        if self.color:
+            _enable_windows_vt(stream)
+        self.line_open = False
+
+    def _write(self, text: str) -> None:
+        self.stream.write(text)
+        self.stream.flush()
+
+    def on_event(self, event: ProviderEvent) -> None:
+        """边收边打印模型文本。shell 在执行前单独成块。"""
+        if event.kind == "text_delta" and event.text:
+            self._write(_paint(event.text, _CYAN, color=self.color))
+            self.line_open = not event.text.endswith("\n")
+        elif event.kind == "tool_call_end" and event.name == "shell":
+            arguments = event.arguments or {}
+            command = arguments.get("command", "") if isinstance(arguments, dict) else ""
+            if not isinstance(command, str):
+                command = str(command)
+            # 模型文本常常不以换行结束，命令块单独起一行。
+            if self.line_open:
+                self._write("\n")
+            self._write(_shell_block(command, color=self.color))
+            self.line_open = False
+
+    def close_line(self) -> None:
+        """一轮结束时补上缺少的换行，避免提示符粘在回复后面。"""
+        if self.line_open:
+            self._write("\n")
+            self.line_open = False
 
 
 def _task_source(task: list[str], stdin_lines: Iterable[str] | None):
@@ -166,14 +245,12 @@ def _task_source(task: list[str], stdin_lines: Iterable[str] | None):
         yield text
 
 
-async def _run_source(agent, source):
+async def _run_source(agent, source, printer: _Printer):
     """每拿到一行就跑一轮并打印。某一轮不是 ``complete`` 时停下来，不再读后面的行。"""
     result = None
     for text in source:
         result = await agent.run(text)
-        if result.text and not result.text.endswith("\n"):
-            sys.stdout.write("\n")
-            sys.stdout.flush()
+        printer.close_line()
         if result.status != "complete":
             return result
     return result
@@ -235,8 +312,11 @@ def main(
     loop = agent
     while not isinstance(loop, Loop):
         loop = loop.loop
-    loop.on_event = _on_event
-    result = asyncio.run(_run_source(agent, _task_source(args.task, stdin_lines)))
+    printer = _Printer(sys.stdout)
+    loop.on_event = printer.on_event
+    result = asyncio.run(
+        _run_source(agent, _task_source(args.task, stdin_lines), printer)
+    )
     if result is None or result.status == "complete":
         return 0
     return 1
