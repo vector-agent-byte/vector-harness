@@ -41,6 +41,23 @@ def test_shell_times_out_within_five_seconds(tmp_path: Path):
     assert result == "Error: command timed out after 1s"
 
 
+def test_shell_replaces_bytes_the_console_encoding_rejects(tmp_path: Path):
+    tool = Shell(tmp_path)
+    result = run(
+        tool.execute(
+            {
+                "command": (
+                    "python -c \"import sys; "
+                    "sys.stdout.buffer.write(bytes([255, 128, 129]))\""
+                )
+            }
+        )
+    )
+    assert "exit_code=0" in result
+    assert "\ufffd" in result
+    assert "UnicodeDecodeError" not in result
+
+
 def test_shell_truncates_output_over_max(tmp_path: Path):
     tool = Shell(tmp_path, max_output=100)
     result = run(tool.execute({"command": 'python -c "print(\'x\' * 9000)"'}))

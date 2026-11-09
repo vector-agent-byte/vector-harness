@@ -6,10 +6,10 @@ build-backend = "setuptools.build_meta"
 name = "vector_harness"
 version = "0.1.0"
 requires-python = ">=3.11"
-dependencies = ["httpx"]
+dependencies = ["openai"]
 
 [project.optional-dependencies]
-dev = ["pytest"]
+dev = ["pytest", "httpx"]
 
 [project.scripts]
 vector-harness = "vector_harness.cli:main"

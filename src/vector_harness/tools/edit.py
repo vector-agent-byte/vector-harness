@@ -1,3 +1,10 @@
+"""在工作目录里替换唯一的一段文本。
+
+``old_string`` 必须正好出现一次，避免改错位置。文件不存在且 ``old_string``
+为空时创建文件。读写使用 ``newline=""``，保留文件原有的换行，
+避免在 Windows 上把 LF 整文件写成 CRLF。
+"""
+
 from __future__ import annotations
 
 from dataclasses import dataclass, field
@@ -10,8 +17,22 @@ _ONCE_ERROR = "Error: old_string must appear exactly once"
 _EMPTY_EXISTS_ERROR = "Error: old_string must be non-empty when the file exists"
 
 
+def _read_text(path: Path) -> str:
+    """按原样读取换行。``Path.read_text(newline=)`` 要到 Python 3.13 才有。"""
+    with path.open(encoding="utf-8", newline="") as handle:
+        return handle.read()
+
+
+def _write_text(path: Path, text: str) -> None:
+    """按文本里已有的换行写回，不让文本模式再翻译一遍。"""
+    with path.open("w", encoding="utf-8", newline="") as handle:
+        handle.write(text)
+
+
 @dataclass
 class EditFile:
+    """用唯一字符串替换编辑一个文件。路径规则和读文件相同。"""
+
     root: Path
     name: str = "edit_file"
     description: str = "Edit a file inside the workspace by replacing a unique string."
@@ -28,6 +49,7 @@ class EditFile:
     )
 
     async def execute(self, arguments: dict) -> str:
+        """替换唯一的一段文本。成功时返回空字符串，失败时返回 ``Error:`` 开头的说明。"""
         rel_path = arguments.get("path", "")
         if not isinstance(rel_path, str):
             rel_path = str(rel_path)
@@ -41,20 +63,17 @@ class EditFile:
         if not isinstance(new_string, str):
             new_string = str(new_string)
         if not target.is_file():
+            # 空的 old_string 表示创建。文件已存在时不允许用空串替换。
             if old_string == "":
                 target.parent.mkdir(parents=True, exist_ok=True)
-                target.write_text(new_string, encoding="utf-8", newline="")
+                _write_text(target, new_string)
                 return ""
             return _ONCE_ERROR
         if old_string == "":
             return _EMPTY_EXISTS_ERROR
-        content = target.read_text(encoding="utf-8", newline="")
+        content = _read_text(target)
         count = content.count(old_string)
         if count != 1:
             return _ONCE_ERROR
-        target.write_text(
-            content.replace(old_string, new_string, 1),
-            encoding="utf-8",
-            newline="",
-        )
+        _write_text(target, content.replace(old_string, new_string, 1))
         return ""

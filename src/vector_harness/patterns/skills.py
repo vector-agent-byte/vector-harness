@@ -5,6 +5,7 @@ from pathlib import Path
 
 
 def _parse_frontmatter(text: str) -> tuple[dict[str, str], str] | None:
+    """解析 ``SKILL.md`` 开头的 YAML 风格前言。缺名字或说明时返回 None。"""
     if not text.startswith("---\n"):
         return None
     rest = text[4:]
@@ -35,9 +36,11 @@ class _Skill:
 
 class Skills:
     def __init__(self, directory: Path) -> None:
+        """技能目录。读取时才扫文件，构造时不加载。"""
         self.directory = directory
 
     def _load(self) -> dict[str, _Skill]:
+        """收集目录下的 ``*.md`` 和一层 ``SKILL.md``。同名时后读到的覆盖先读到的。"""
         found: dict[str, _Skill] = {}
         if not self.directory.is_dir():
             return found
@@ -55,6 +58,7 @@ class Skills:
         return found
 
     def index_prompt(self) -> str:
+        """生成放进系统提示的技能索引。目录不存在时返回空字符串。"""
         if not self.directory.is_dir():
             return ""
         skills = self._load()
@@ -64,6 +68,7 @@ class Skills:
         return "\n".join(lines)
 
     def read_tool(self) -> _ReadSkill:
+        """返回按名字读取技能正文的工具。"""
         return _ReadSkill(self)
 
 
@@ -81,6 +86,7 @@ class _ReadSkill:
     )
 
     async def execute(self, arguments: dict) -> str:
+        """按名字返回技能正文。找不到时返回固定的未知技能错误。"""
         skill_name = arguments.get("name", "")
         if not isinstance(skill_name, str):
             skill_name = str(skill_name)

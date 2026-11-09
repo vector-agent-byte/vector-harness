@@ -9,6 +9,7 @@ _PLAN_SYSTEM = 'Reply with JSON only, of the form {"steps": ["..."]}.'
 
 
 def format_plan(steps: list[str]) -> str:
+    """把步骤收成 ``Plan:`` 加编号列表，写进会话给执行阶段看。"""
     lines = ["Plan:"]
     for index, step in enumerate(steps, start=1):
         lines.append(f"{index}. {step}")
@@ -16,6 +17,7 @@ def format_plan(steps: list[str]) -> str:
 
 
 def _parse_steps(text: str) -> list[str] | None:
+    """解析 ``{"steps": [字符串, ...]}``。格式不对时返回 None，让调用方再要一次。"""
     try:
         data = json.loads(text)
     except json.JSONDecodeError:
@@ -32,9 +34,11 @@ def _parse_steps(text: str) -> list[str] | None:
 
 class PlanThenExecute:
     def __init__(self, loop: Loop) -> None:
+        """包住已经装配好的循环。计划阶段不往这个循环里加工具。"""
         self.loop = loop
 
     async def _collect_plan(self, user_content: str) -> str:
+        """向模型要一份计划。工具列表为空，文本增量走循环上的同一个回调。"""
         text = ""
         async for event in self.loop.provider.stream(
             system=_PLAN_SYSTEM,
@@ -48,6 +52,7 @@ class PlanThenExecute:
         return text
 
     async def run(self, user_text: str) -> RunResult:
+        """先要计划，最多两次。成功后把计划写入会话再执行，步数包含计划请求。"""
         prompt = user_text
         last_text = ""
         for attempt in range(1, 3):

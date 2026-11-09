@@ -177,6 +177,7 @@ def test_sse_assembles_text_and_tool_call_arguments():
     assert str(request.url) == "http://example.test/v1/chat/completions"
     assert request.method == "POST"
     assert request.headers["Authorization"] == "Bearer test-key"
+    assert "OpenAI/Python" in request.headers["user-agent"]
     body = json.loads(request.content)
     assert body["model"] == "test-model"
     assert body["stream"] is True

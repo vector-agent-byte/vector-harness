@@ -154,19 +154,89 @@ def test_merged_env_overrides_model_and_base_url_only():
     assert merged["VECTOR_API_KEY"] == "k"
 
 
-def test_main_missing_secrets_reports_env_names(capsys):
+def test_main_missing_secrets_reports_env_names(tmp_path: Path, capsys):
     from vector_harness.cli import main
 
-    assert main(["do it"], environ={}) == 1
+    missing = tmp_path / "missing.toml"
+    assert main(["do it"], environ={}, config_file=missing) == 1
     assert "VECTOR_API_KEY" in capsys.readouterr().err
     assert (
         main(
             ["do it"],
             environ={"VECTOR_API_KEY": "k", "VECTOR_BASE_URL": "http://example"},
+            config_file=missing,
         )
         == 1
     )
     assert "VECTOR_MODEL" in capsys.readouterr().err
+
+
+def _write_config(path: Path, text: str) -> Path:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(text, encoding="utf-8")
+    return path
+
+
+def test_config_file_supplies_connection_settings(tmp_path: Path, monkeypatch):
+    from vector_harness.cli import main
+
+    config = _write_config(
+        tmp_path / ".vector-harness" / "config.toml",
+        'api_key = "file-key"\nbase_url = "http://example.test/v1"\nmodel = "file-model"\n',
+    )
+    seen: dict = {}
+
+    def fake_from_env(env=None):
+        seen.update(env or {})
+        return ScriptedProvider(turns=[ScriptedTurn(content="ok")])
+
+    monkeypatch.setattr(
+        "vector_harness.cli.OpenAICompatibleProvider.from_env", fake_from_env
+    )
+    workspace = tmp_path / "ws"
+    workspace.mkdir()
+    code = main(
+        ["--workspace", str(workspace), "hi"],
+        environ={},
+        config_file=config,
+    )
+    assert code == 0
+    assert seen["VECTOR_API_KEY"] == "file-key"
+    assert seen["VECTOR_BASE_URL"] == "http://example.test/v1"
+    assert seen["VECTOR_MODEL"] == "file-model"
+
+
+def test_env_and_cli_override_config_file(tmp_path: Path, monkeypatch):
+    from vector_harness.cli import main
+
+    config = _write_config(
+        tmp_path / ".config.toml",
+        'api_key = "file-key"\nbase_url = "http://file.test/v1"\nmodel = "file-model"\n',
+    )
+    seen: dict = {}
+
+    def fake_from_env(env=None):
+        seen.update(env or {})
+        return ScriptedProvider(turns=[ScriptedTurn(content="ok")])
+
+    monkeypatch.setattr(
+        "vector_harness.cli.OpenAICompatibleProvider.from_env", fake_from_env
+    )
+    workspace = tmp_path / "ws"
+    workspace.mkdir()
+    code = main(
+        ["--workspace", str(workspace), "--model", "cli-model", "hi"],
+        environ={
+            "VECTOR_API_KEY": "env-key",
+            "VECTOR_BASE_URL": "http://env.test/v1",
+            "VECTOR_MODEL": "env-model",
+        },
+        config_file=config,
+    )
+    assert code == 0
+    assert seen["VECTOR_API_KEY"] == "env-key"
+    assert seen["VECTOR_BASE_URL"] == "http://env.test/v1"
+    assert seen["VECTOR_MODEL"] == "cli-model"
 
 
 def test_main_runs_task_and_writes_session(tmp_path: Path, capsys):
@@ -222,6 +292,30 @@ def test_memory_flag_without_path_uses_workspace_default(tmp_path: Path):
         == 0
     )
     assert "remember" not in [tool.name for tool in disabled.seen_tools]
+
+
+def test_memory_flag_before_the_task_does_not_wait_for_stdin(tmp_path: Path):
+    from vector_harness.cli import main
+
+    workspace = tmp_path / "ws"
+    workspace.mkdir()
+    provider = RecordingProvider(turns=[ScriptedTurn(content="vector-harness")])
+    code = main(
+        ["--workspace", str(workspace), "--memory", "项目代号是什么"],
+        environ={},
+        provider=provider,
+        stdin_lines=[],
+    )
+    assert code == 0
+    user_texts = [
+        message["content"]
+        for call in provider.calls
+        for message in call["messages"]
+        if message["role"] == "user"
+    ]
+    assert user_texts == ["项目代号是什么"]
+    remember = next(tool for tool in provider.seen_tools if tool.name == "remember")
+    assert remember.path == workspace / ".vector" / "MEMORY.md"
 
 
 def test_shell_command_is_printed_before_execute(tmp_path: Path, monkeypatch):

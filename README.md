@@ -22,11 +22,21 @@
 可导入的运行时，只包含四块：
 
 - **工具循环**：模型提出工具调用，程序执行，结果喂回模型，直到答完或达到步数上限。
-- **模型接口**：OpenAI Chat Completions 兼容的 HTTP 实现，调用方也可以换成自己的实现。
+- **模型接口**：官方 OpenAI 客户端的 Chat Completions，调用方也可以换成自己的实现。
 - **工具执行**：默认提供读文件、改文件、跑命令。路径限制在工作目录内。
 - **会话记录**：JSONL 文件，可以接着上一次继续。
 
 默认入口是终端。核心代码不导入任何模式模块。
+
+连接信息写在 `~/.vector-harness/config.toml`：
+
+```toml
+api_key = "..."
+base_url = "https://example/v1"
+model = "..."
+```
+
+环境变量 `VECTOR_API_KEY`、`VECTOR_BASE_URL`、`VECTOR_MODEL` 以及 `--model`、`--base-url` 会覆盖文件里的同名项。密钥没有命令行参数。
 
 ### 模式
 
@@ -43,6 +53,35 @@
 ### 这一版不做
 
 聊天渠道、Web UI、定时任务、MCP、质量门、Auto Research、命令沙箱和人机确认。
+
+### 安装
+
+需要 Python 3.11 及以上。开发环境是 conda 的 `env-py3117`（Python 3.11.7）。在仓库根目录执行：
+
+```powershell
+conda activate env-py3117
+python -m pip install -i https://pypi.tuna.tsinghua.edu.cn/simple --default-timeout=1000000 -e ".[dev]"
+```
+
+这会以可编辑方式安装 `vector_harness`，并装上测试用的 `pytest` 和 `httpx`。模型调用使用官方 `openai` 包。
+
+### 验证
+
+不连模型时，在仓库根目录跑测试：
+
+```powershell
+python -m pytest -q
+```
+
+全部通过即可。Windows 上若没有创建符号链接的权限，会跳过一条测试。
+
+连模型时，把连接信息写到 `~/.vector-harness/config.toml`（Windows 上是 `%USERPROFILE%\.vector-harness\config.toml`），字段见上文。然后在仓库根目录执行：
+
+```powershell
+python -m vector_harness.cli --workspace . 读 README.md，用一句话说明这个项目做什么
+```
+
+终端会打出模型的回复。不写任务则逐行对话，输入 `/exit` 结束。需要模式时加上 `--compact`、`--skills 目录`、`--plan`、`--subagents`、`--memory`。
 
 ### 仓库状态
 
@@ -70,11 +109,21 @@ Two goals carry equal weight:
 The importable runtime is four pieces:
 
 - **Tool loop** — the model requests tool calls, the program runs them, and results go back to the model until it answers or hits the step limit.
-- **Model interface** — one OpenAI Chat Completions-compatible HTTP implementation, plus a replaceable provider protocol.
+- **Model interface** — the official OpenAI client calling Chat Completions, plus a replaceable provider protocol.
 - **Tool execution** — read files, edit files, and run commands. Paths stay inside the workspace.
 - **Session** — a JSONL transcript that can be resumed.
 
 The default entry point is the terminal. Core code does not import pattern modules.
+
+Put the connection in `~/.vector-harness/config.toml`:
+
+```toml
+api_key = "..."
+base_url = "https://example/v1"
+model = "..."
+```
+
+`VECTOR_API_KEY`, `VECTOR_BASE_URL`, `VECTOR_MODEL`, `--model`, and `--base-url` override the file. There is no command-line flag for the key.
 
 ### Patterns
 
@@ -91,6 +140,35 @@ Each pattern is its own module, wired explicitly by the caller or the CLI. All a
 ### Out of this version
 
 Chat channels, a web UI, scheduled tasks, MCP, quality gates, auto research, command sandboxing, and human approval prompts.
+
+### Install
+
+Python 3.11 or newer. Development uses the conda env `env-py3117` (Python 3.11.7). From the repository root:
+
+```powershell
+conda activate env-py3117
+python -m pip install -i https://pypi.tuna.tsinghua.edu.cn/simple --default-timeout=1000000 -e ".[dev]"
+```
+
+This installs `vector_harness` in editable mode, plus `pytest` and `httpx` for tests. Model calls use the official `openai` package.
+
+### Verify
+
+Without a model, from the repository root:
+
+```powershell
+python -m pytest -q
+```
+
+The suite should pass. On Windows, one test is skipped when the account cannot create symlinks.
+
+To call a model, write `~/.vector-harness/config.toml` (on Windows, `%USERPROFILE%\.vector-harness\config.toml`) using the fields above, then from the repository root:
+
+```powershell
+python -m vector_harness.cli --workspace . 读 README.md，用一句话说明这个项目做什么
+```
+
+The terminal prints the model's reply. Omit the task to chat one line at a time, and type `/exit` to stop. Turn patterns on with `--compact`, `--skills <dir>`, `--plan`, `--subagents`, or `--memory`.
 
 ### Status
 

@@ -21,6 +21,7 @@ class RememberTool:
     )
 
     async def execute(self, arguments: dict) -> str:
+        """往记忆文件追加一行 ``- 日期: 文本``。成功时返回空字符串。"""
         text = arguments.get("text", "")
         if not isinstance(text, str):
             text = str(text)
@@ -36,9 +37,11 @@ class Memory:
     path: Path
 
     def prompt(self) -> str:
+        """读出已有记忆，拼进系统提示。文件还不存在时返回空字符串。"""
         if not self.path.is_file():
             return ""
         return self.path.read_text(encoding="utf-8")
 
     def remember_tool(self) -> Tool:
+        """返回追加记忆的工具，由调用方放进工具列表。"""
         return RememberTool(path=self.path)

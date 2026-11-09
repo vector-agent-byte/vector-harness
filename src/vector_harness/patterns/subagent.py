@@ -25,6 +25,7 @@ class _Delegate:
     )
 
     async def execute(self, arguments: dict) -> str:
+        """把任务交给一层子循环。子循环用不落盘的会话，并且拿不到 ``delegate``。"""
         task = arguments.get("task", "")
         if not isinstance(task, str):
             task = str(task)
@@ -53,6 +54,7 @@ def delegate_tool(
     context_transforms: list | None = None,
     max_steps: int = 10,
 ) -> _Delegate:
+    """构造委托工具。默认最多 10 步，调用方负责把它放进父循环的工具列表。"""
     return _Delegate(
         provider=provider,
         tools=tools,

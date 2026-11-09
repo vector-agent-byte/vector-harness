@@ -4,6 +4,7 @@ import argparse
 import asyncio
 import os
 import sys
+import tomllib
 from collections.abc import Iterable, Mapping
 from pathlib import Path
 from uuid import uuid4
@@ -22,7 +23,6 @@ from vector_harness.tools.shell import Shell
 from vector_harness.types import ProviderError, ProviderEvent
 
 DEFAULT_SYSTEM = "You are a capable agent. Use tools to finish the task in the workspace."
-_DEFAULT_MEMORY = "__vector_harness_default_memory__"
 
 
 def build_agent(
@@ -37,6 +37,7 @@ def build_agent(
     subagents: bool = False,
     max_steps: int = 25,
 ) -> Loop | PlanThenExecute:
+    """按显式开关装配循环。默认只有读、改、命令三个工具，模式不打开就不挂上。"""
     tools: list = [
         ReadFile(workspace),
         EditFile(workspace),
@@ -82,6 +83,7 @@ def build_agent(
 def merged_env(
     env: Mapping[str, str], *, model: str | None, base_url: str | None
 ) -> dict:
+    """命令行里的模型和基址覆盖环境变量。密钥不从这里进入。"""
     merged = dict(env)
     if model is not None:
         merged["VECTOR_MODEL"] = model
@@ -90,18 +92,66 @@ def merged_env(
     return merged
 
 
+def default_config_path() -> Path:
+    """连接配置的默认位置：家目录下的 ``.vector-harness/config.toml``。"""
+    return Path.home() / ".vector-harness" / "config.toml"
+
+
+_CONFIG_KEYS = {
+    "api_key": "VECTOR_API_KEY",
+    "base_url": "VECTOR_BASE_URL",
+    "model": "VECTOR_MODEL",
+}
+
+
+def apply_config(env: Mapping[str, str], path: Path) -> dict:
+    """用配置文件填上环境里还没有的连接项。文件不存在就原样返回。"""
+    merged = dict(env)
+    if not path.is_file():
+        return merged
+    try:
+        with path.open("rb") as handle:
+            data = tomllib.load(handle)
+    except tomllib.TOMLDecodeError as exc:
+        raise ProviderError(f"invalid config {path}: {exc}") from exc
+    for key, env_name in _CONFIG_KEYS.items():
+        if merged.get(env_name):
+            continue
+        if key not in data:
+            continue
+        value = data[key]
+        if not isinstance(value, str) or not value:
+            raise ProviderError(
+                f"invalid config {path}: {key} must be a non-empty string"
+            )
+        merged[env_name] = value
+    return merged
+
+
 def _parser() -> argparse.ArgumentParser:
+    """命令行定义。密钥没有对应参数，避免出现在进程列表里。"""
     parser = argparse.ArgumentParser(
         prog="vector-harness",
         description=(
             "Run an agent in a workspace. "
             "With --compact, fold the context after 80000 characters "
-            "and keep the last 8 messages."
+            "and keep the last 8 messages. "
+            "Connection settings can live in ~/.vector-harness/config.toml "
+            "as api_key, base_url, and model."
         ),
     )
     parser.add_argument("--workspace", default=".")
     parser.add_argument("--session", default=None)
-    parser.add_argument("--memory", nargs="?", const=_DEFAULT_MEMORY, default=None)
+    parser.add_argument(
+        "--memory",
+        action="store_true",
+        help="Append long-term memory at {workspace}/.vector/MEMORY.md.",
+    )
+    parser.add_argument(
+        "--memory-path",
+        default=None,
+        help="Memory file to use instead of the workspace default.",
+    )
     parser.add_argument("--skills", default=None)
     parser.add_argument("--compact", action="store_true")
     parser.add_argument("--plan", action="store_true")
@@ -113,26 +163,37 @@ def _parser() -> argparse.ArgumentParser:
     return parser
 
 
-def _memory_path(value: str | None, workspace: Path) -> Path | None:
-    if value is None:
-        return None
-    if value == _DEFAULT_MEMORY:
+def _memory_path(
+    enabled: bool, explicit: str | None, workspace: Path
+) -> Path | None:
+    """决定记忆文件。``--memory`` 只是开关，后面的文字仍是任务。自定义路径用 ``--memory-path``。"""
+    if explicit:
+        return Path(explicit)
+    if enabled:
         return workspace / ".vector" / "MEMORY.md"
-    return Path(value)
+    return None
 
 
 def _on_event(event: ProviderEvent) -> None:
+    """边收边打印模型文本，并在 shell 执行前打出命令。"""
     if event.kind == "text_delta":
-        sys.stdout.write(event.text)
-        sys.stdout.flush()
+        if event.text:
+            sys.stdout.write(event.text)
+            sys.stdout.flush()
+            _on_event.line_open = not event.text.endswith("\n")
     elif event.kind == "tool_call_end" and event.name == "shell":
         arguments = event.arguments or {}
         command = arguments.get("command", "") if isinstance(arguments, dict) else ""
+        # 模型文本常常不以换行结束，命令单独起一行。
+        if getattr(_on_event, "line_open", False):
+            sys.stdout.write("\n")
         sys.stdout.write(f"command: {command}\n")
         sys.stdout.flush()
+        _on_event.line_open = False
 
 
 def _task_source(task: list[str], stdin_lines: Iterable[str] | None):
+    """有任务文本就只跑这一句。否则逐行读取，空行跳过，``/exit`` 结束且不送给模型。"""
     joined = " ".join(task).strip()
     if joined:
         yield joined
@@ -148,6 +209,7 @@ def _task_source(task: list[str], stdin_lines: Iterable[str] | None):
 
 
 async def _run_source(agent, source):
+    """每拿到一行就跑一轮并打印。某一轮不是 ``complete`` 时停下来，不再读后面的行。"""
     result = None
     for text in source:
         result = await agent.run(text)
@@ -164,7 +226,9 @@ def main(
     environ: Mapping[str, str] | None = None,
     provider=None,
     stdin_lines: Iterable[str] | None = None,
+    config_file: Path | None = None,
 ) -> int:
+    """终端入口。成功返回 0，缺配置、工作目录无效或这一轮没有完成时返回 1。"""
     args = _parser().parse_args(argv)
     workspace = Path(args.workspace)
     if not workspace.is_dir():
@@ -181,6 +245,13 @@ def main(
         model=args.model,
         base_url=args.base_url,
     )
+    try:
+        env = apply_config(
+            env, default_config_path() if config_file is None else config_file
+        )
+    except ProviderError as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
     if provider is None:
         try:
             provider = OpenAICompatibleProvider.from_env(env)
@@ -196,7 +267,7 @@ def main(
         workspace=workspace,
         session=Session(session_path),
         skills_dir=skills_dir,
-        memory_path=_memory_path(args.memory, workspace),
+        memory_path=_memory_path(args.memory, args.memory_path, workspace),
         compact=args.compact,
         plan=args.plan,
         subagents=args.subagents,

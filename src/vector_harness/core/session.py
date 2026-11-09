@@ -1,3 +1,9 @@
+"""把一轮对话存成 JSONL。
+
+每行一个消息，键固定为 ``role``、``content``、``tool_calls``、``tool_call_id``、
+``is_error``。``path is None`` 的会话只留在内存里，给子循环用，不碰磁盘。
+"""
+
 from __future__ import annotations
 
 import json
@@ -8,6 +14,7 @@ from vector_harness.types import Message, ToolCall
 
 
 def _message_to_dict(message: Message) -> dict:
+    """收成可往返的 JSON 对象。没有工具调用时 ``tool_calls`` 写成 null。"""
     tool_calls: list[dict] | None
     if message.tool_calls is None:
         tool_calls = None
@@ -30,6 +37,7 @@ def _message_to_dict(message: Message) -> dict:
 
 
 def _message_from_dict(data: dict) -> Message:
+    """从一行 JSON 还原消息。缺 ``is_error`` 时当作成功的工具结果。"""
     raw_tool_calls = data.get("tool_calls")
     tool_calls: list[ToolCall] | None
     if raw_tool_calls is None:
@@ -54,16 +62,21 @@ def _message_from_dict(data: dict) -> Message:
 
 @dataclass
 class Session:
+    """一份会话。有路径就读写那个 JSONL 文件，没有路径就只留在内存。"""
+
     path: Path | None
 
     @classmethod
     def in_memory(cls) -> Session:
+        """子循环用的会话。写入不会创建文件。"""
         return cls(path=None)
 
     def __post_init__(self) -> None:
+        """内存会话的消息放在这里。有文件路径时以文件为准。"""
         self._messages: list[Message] = []
 
     def load(self) -> list[Message]:
+        """读出全部消息。文件还不存在或是空的，返回空列表。"""
         if self.path is None:
             return list(self._messages)
         if not self.path.is_file():
@@ -79,6 +92,7 @@ class Session:
         return messages
 
     def append(self, message: Message) -> None:
+        """追加一条。文件在第一次写入时才创建，所以只打开会话不会留下空文件。"""
         if self.path is None:
             self._messages.append(message)
             return
@@ -88,6 +102,7 @@ class Session:
             f.write(line + "\n")
 
     def replace_all(self, messages: list[Message]) -> None:
+        """整份重写。压缩把前缀折成摘要之后用它替换原文。"""
         if self.path is None:
             self._messages = list(messages)
             return

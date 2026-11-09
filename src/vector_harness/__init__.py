@@ -1,3 +1,9 @@
+"""包的公开入口。
+
+这里只导出核心类型、循环、会话、模型实现和三个默认工具。
+模式类不在这个列表里，这样 ``import vector_harness`` 不会把模式包加载进来。
+"""
+
 from vector_harness.core.loop import Loop
 from vector_harness.core.provider import OpenAICompatibleProvider
 from vector_harness.core.session import Session
