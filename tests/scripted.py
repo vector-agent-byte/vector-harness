@@ -10,6 +10,7 @@ from vector_harness.types import Message, ProviderEvent, ToolCall
 class ScriptedTurn:
     content: str = ""
     tool_calls: list[ToolCall] | None = None
+    thinking: str = ""
 
 
 @dataclass
@@ -44,6 +45,8 @@ class ScriptedProvider:
                 "tools": [getattr(t, "name", str(t)) for t in tools],
             }
         )
+        if turn.thinking:
+            yield ProviderEvent(kind="thinking_delta", text=turn.thinking)
         if turn.content:
             yield ProviderEvent(kind="text_delta", text=turn.content)
         for tc in turn.tool_calls or []:

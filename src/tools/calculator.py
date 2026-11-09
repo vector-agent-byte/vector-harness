@@ -43,6 +43,7 @@ def evaluate(expression: str) -> str:
         value = _eval_node(ast.parse(expression, mode="eval"))
     except (SyntaxError, ValueError, ZeroDivisionError, OverflowError):
         return "Error: unsupported expression"
+    # 8/2 得到 4.0。整数值去掉小数点，模型可以直接引用。
     if isinstance(value, float) and value.is_integer():
         return str(int(value))
     return str(value)

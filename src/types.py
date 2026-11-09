@@ -67,8 +67,9 @@ class RunResult:
 class ProviderEvent:
     """模型流向外发出的一个观察事件。
 
-    ``kind`` 只有 ``text_delta``、``tool_call_start``、``tool_call_end``、
-    ``run_end``。这是终端的观察口，不是模式插件。
+    ``kind`` 有 ``thinking_delta``、``text_delta``、``tool_call_start``、
+    ``tool_call_end``、``run_end``。这是终端的观察口，不是模式插件。
+    ``thinking_delta`` 是模型的思考过程，只给观察方看，不写入会话。
     ``tool_call_start`` 的 ``arguments`` 保持 ``None``，参数要等
     ``tool_call_end`` 才完整。
     """
@@ -80,6 +81,7 @@ class ProviderEvent:
     arguments: dict | None = None
 
 
+# 可以 isinstance 检查。循环按这些字段调用，工具不必继承某个基类。
 @runtime_checkable
 class Tool(Protocol):
     """模型可以调用的一个工具。
@@ -97,6 +99,7 @@ class Tool(Protocol):
         ...
 
 
+# 和 Tool 一样，只约定方法，不规定放在哪个模块。
 @runtime_checkable
 class ContextTransform(Protocol):
     """每次模型请求前可以改写会话消息的钩子。

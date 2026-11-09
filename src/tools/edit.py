@@ -73,6 +73,7 @@ class EditFile:
             return _EMPTY_EXISTS_ERROR
         content = _read_text(target)
         count = content.count(old_string)
+        # 出现 0 次或多次都不改文件，避免改错位置。
         if count != 1:
             return _ONCE_ERROR
         _write_text(target, content.replace(old_string, new_string, 1))

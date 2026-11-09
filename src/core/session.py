@@ -78,6 +78,7 @@ class Session:
     def load(self) -> list[Message]:
         """读出全部消息。文件还不存在或是空的，返回空列表。"""
         if self.path is None:
+            # 返回副本。调用方改这个列表，不会直接改掉会话里的原列表。
             return list(self._messages)
         if not self.path.is_file():
             return []
@@ -86,6 +87,7 @@ class Session:
             return []
         messages: list[Message] = []
         for line in text.splitlines():
+            # 空行不是消息。文件末尾多出来的换行落在这里。
             if not line.strip():
                 continue
             messages.append(_message_from_dict(json.loads(line)))
@@ -97,6 +99,7 @@ class Session:
             self._messages.append(message)
             return
         self.path.parent.mkdir(parents=True, exist_ok=True)
+        # 中文原样写入。每条独占一行，中断时最多损坏刚写下的这一行。
         line = json.dumps(_message_to_dict(message), ensure_ascii=False)
         with self.path.open("a", encoding="utf-8") as f:
             f.write(line + "\n")
@@ -109,6 +112,7 @@ class Session:
         self.path.parent.mkdir(parents=True, exist_ok=True)
         lines = [json.dumps(_message_to_dict(m), ensure_ascii=False) for m in messages]
         content = "\n".join(lines)
+        # 最后一条也以换行结束，和 append 的行格式一致。这是整份覆盖。
         if lines:
             content += "\n"
         self.path.write_text(content, encoding="utf-8")

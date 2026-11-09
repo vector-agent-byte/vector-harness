@@ -3,6 +3,7 @@ from __future__ import annotations
 import io
 import subprocess
 import sys
+from datetime import datetime
 from pathlib import Path
 
 import pytest
@@ -319,6 +320,9 @@ def test_shell_command_is_printed_before_execute(tmp_path: Path, monkeypatch):
     workspace.mkdir()
     buffer = io.StringIO()
     monkeypatch.setattr(sys, "stdout", buffer)
+    monkeypatch.setattr(
+        "vector_harness.cli._now", lambda: datetime(2026, 11, 9, 17, 1, 3)
+    )
 
     seen: dict[str, str] = {}
 
@@ -354,7 +358,7 @@ def test_shell_command_is_printed_before_execute(tmp_path: Path, monkeypatch):
         provider=provider,
     )
     assert code == 0
-    assert seen["before"] == "  shell\n    echo hi\n"
+    assert seen["before"] == "17:01:03 [tool] shell        echo hi\n"
 
 
 def test_color_paints_reply_and_shell_command(tmp_path: Path, monkeypatch):
@@ -365,6 +369,9 @@ def test_color_paints_reply_and_shell_command(tmp_path: Path, monkeypatch):
     buffer = io.StringIO()
     monkeypatch.setenv("VECTOR_COLOR", "always")
     monkeypatch.delenv("NO_COLOR", raising=False)
+    monkeypatch.setattr(
+        "vector_harness.cli._now", lambda: datetime(2026, 11, 9, 17, 1, 3)
+    )
     monkeypatch.setattr(sys, "stdout", buffer)
     provider = ScriptedProvider(
         turns=[
@@ -384,9 +391,65 @@ def test_color_paints_reply_and_shell_command(tmp_path: Path, monkeypatch):
     )
     assert code == 0
     output = buffer.getvalue()
-    assert "\033[36mhello\033[0m" in output
-    assert "\033[1;36m  shell\033[0m\n\033[33m    echo hi\033[0m\n" in output
-    assert "\033[36mdone\033[0m\n" in output
+    assert "\033[36mhello" not in output
+    assert (
+        "\033[2m17:01:03\033[0m "
+        "\033[1;35m[tool]\033[0m "
+        "\033[1;36mshell       \033[0m "
+        "\033[33mecho hi\033[0m\n"
+    ) in output
+    assert output.endswith("\ndone\n")
+
+
+def test_read_file_is_printed_on_the_same_tool_column(tmp_path: Path, monkeypatch):
+    from vector_harness.cli import main
+
+    workspace = tmp_path / "ws"
+    workspace.mkdir()
+    buffer = io.StringIO()
+    monkeypatch.setattr(sys, "stdout", buffer)
+    monkeypatch.setattr(
+        "vector_harness.cli._now", lambda: datetime(2026, 11, 9, 17, 1, 3)
+    )
+    provider = ScriptedProvider(
+        turns=[
+            ScriptedTurn(
+                tool_calls=[
+                    ToolCall(id="1", name="read_file", arguments={"path": "notes.txt"})
+                ]
+            ),
+            ScriptedTurn(content="done"),
+        ]
+    )
+    code = main(
+        ["--workspace", str(workspace), "run"],
+        environ={},
+        provider=provider,
+    )
+    assert code == 0
+    assert "17:01:03 [tool] read_file    notes.txt\n" in buffer.getvalue()
+
+
+def test_thinking_is_printed_before_the_reply(tmp_path: Path, monkeypatch):
+    from vector_harness.cli import main
+
+    workspace = tmp_path / "ws"
+    workspace.mkdir()
+    buffer = io.StringIO()
+    monkeypatch.setattr(sys, "stdout", buffer)
+    monkeypatch.setattr(
+        "vector_harness.cli._now", lambda: datetime(2026, 11, 9, 17, 1, 3)
+    )
+    provider = ScriptedProvider(
+        turns=[ScriptedTurn(thinking="先看目录", content="hello.txt")]
+    )
+    code = main(
+        ["--workspace", str(workspace), "run"],
+        environ={},
+        provider=provider,
+    )
+    assert code == 0
+    assert buffer.getvalue() == "17:01:03 [think] 先看目录\nhello.txt\n"
 
 
 def test_interactive_run_starts_before_the_next_line_is_read(tmp_path: Path, monkeypatch):

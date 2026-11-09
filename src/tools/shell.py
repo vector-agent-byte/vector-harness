@@ -47,6 +47,7 @@ class Shell:
             errors="replace",
         )
         try:
+            # communicate 会占住事件循环，直到命令结束或超时。
             out, err = proc.communicate(timeout=self.timeout)
         except subprocess.TimeoutExpired:
             # Windows 上 kill 不到整棵子进程树，用 taskkill /T 把子进程一起结束。
@@ -60,6 +61,7 @@ class Shell:
             proc.communicate()
             return f"Error: command timed out after {self.timeout}s"
         formatted = f"exit_code={proc.returncode}\nstdout:\n{out}\nstderr:\n{err}"
+        # 先读完再截断。返回给模型的文本有上限，读的过程本身不限内存。
         if len(formatted) > self.max_output:
             return formatted[: self.max_output] + "\n...[truncated]"
         return formatted

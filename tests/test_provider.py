@@ -337,6 +337,23 @@ def test_sse_merges_tool_calls_by_index():
     ]
 
 
+def test_reasoning_content_is_a_thinking_delta_not_reply_text():
+    handler = RecordedHandler(
+        [
+            sse_response(
+                {"choices": [{"index": 0, "delta": {"reasoning_content": "先看目录"}}]},
+                {"choices": [{"index": 0, "delta": {"content": "hello.txt"}}]},
+            )
+        ]
+    )
+    provider, _ = make_provider(handler)
+    events = collect(provider)
+    assert [(event.kind, event.text) for event in events] == [
+        ("thinking_delta", "先看目录"),
+        ("text_delta", "hello.txt"),
+    ]
+
+
 def test_invalid_tool_argument_json():
     handler = RecordedHandler(
         [

@@ -127,6 +127,7 @@ class OpenAICompatibleProvider:
         if not model:
             raise ProviderError("VECTOR_MODEL is not set")
         self.api_key = api_key
+        # 去掉末尾斜线，避免和客户端拼接路径时叠成双斜线。
         self.base_url = base_url.rstrip("/")
         self.model = model
         self.max_attempts = max_attempts
@@ -208,10 +209,12 @@ class OpenAICompatibleProvider:
             finally:
                 if http_client is not None:
                     await http_client.aclose()
+            # 只有 429 和 5xx 会走到这里。超时、连接失败和其它 4xx 已经抛出。
             if retry_status is None:
                 return
             if attempt >= self.max_attempts:
                 raise ProviderError(f"HTTP {retry_status}")
+            # 两次尝试之间固定等 0.5 秒。测试可以换成不睡眠的函数。
             await self.sleep(0.5)
 
 
@@ -270,28 +273,59 @@ def _is_httpx_transport_error(exc: BaseException) -> bool:
     return isinstance(exc, (httpx.TimeoutException, httpx.TransportError))
 
 
+def _delta_text(delta: Any, *names: str) -> str:
+    """从分片上取一段文本。兼容网关把思考放在额外字段里，不在官方的 content 上。"""
+    if delta is None:
+        return ""
+    for name in names:
+        value = getattr(delta, name, None)
+        if isinstance(value, str) and value:
+            return value
+    extra = getattr(delta, "__pydantic_extra__", None)
+    if not isinstance(extra, dict):
+        extra = getattr(delta, "model_extra", None)
+    if isinstance(extra, dict):
+        for name in names:
+            value = extra.get(name)
+            if isinstance(value, str) and value:
+                return value
+    if isinstance(delta, dict):
+        for name in names:
+            value = delta.get(name)
+            if isinstance(value, str) and value:
+                return value
+    return ""
+
+
 async def _events_from_stream(stream: Any) -> AsyncIterator[ProviderEvent]:
     """把 SDK 的流式分片收成循环认识的事件。
 
     一次工具调用会拆成多个分片，用 ``index`` 拼回同一次调用。
     名字和 id 到齐就发出 ``tool_call_start``，参数要等流结束才解析。
     没有 choices 的用量分片直接跳过。参数不是合法 JSON 时放进 ``_invalid_json``，
-    交给循环拒绝执行。
+    交给循环拒绝执行。思考字段单独变成 ``thinking_delta``，不并进正文。
     """
     buckets: dict[int, dict[str, str]] = {}
     started: set[int] = set()
     async for chunk in stream:
         choices = getattr(chunk, "choices", None) or []
+        # 用量分片没有 choices，不参与正文。
         if not choices:
             continue
+        # 只取第一条候选。这个接口不合并多条 choice。
         delta = getattr(choices[0], "delta", None)
-        content = getattr(delta, "content", None)
+        thinking = _delta_text(delta, "reasoning_content", "reasoning", "thinking")
+        if thinking:
+            yield ProviderEvent(kind="thinking_delta", text=thinking)
+        content = _delta_text(delta, "content")
         if content:
             yield ProviderEvent(kind="text_delta", text=content)
         for item in getattr(delta, "tool_calls", None) or []:
+            # 缺省的 index 归到 0。已经是 0 时仍然是第 0 次调用。
             idx = getattr(item, "index", 0) or 0
             bucket = buckets.setdefault(idx, {"id": "", "name": "", "arguments": ""})
             call_id = getattr(item, "id", None)
+            # 后面的分片可能再次带上 id 或名字，只保留第一次。
             if call_id and not bucket["id"]:
                 bucket["id"] = call_id
             function = getattr(item, "function", None)
@@ -299,6 +333,7 @@ async def _events_from_stream(stream: Any) -> AsyncIterator[ProviderEvent]:
             if name and not bucket["name"]:
                 bucket["name"] = name
             fragment = getattr(function, "arguments", None)
+            # 参数按到达顺序拼成一个 JSON 字符串，流结束再解析。
             if fragment:
                 bucket["arguments"] += fragment
             if idx not in started and bucket["id"] and bucket["name"]:
@@ -313,6 +348,7 @@ async def _events_from_stream(stream: Any) -> AsyncIterator[ProviderEvent]:
         bucket = buckets[idx]
         raw = bucket["arguments"]
         try:
+            # 空参数是合法的 {}。解析失败才放进 _invalid_json。
             parsed = json.loads(raw) if raw else {}
         except json.JSONDecodeError:
             parsed = {"_invalid_json": raw}

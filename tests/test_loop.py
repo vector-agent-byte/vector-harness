@@ -154,6 +154,19 @@ def test_max_steps_one_and_tool_every_time():
     assert "y" in messages[-1].content
 
 
+def test_thinking_is_not_stored_as_the_reply():
+    provider = ScriptedProvider(
+        turns=[ScriptedTurn(thinking="先看目录", content="hello.txt")]
+    )
+    session = Session.in_memory()
+    loop = Loop(provider=provider, tools=[], session=session, system="sys")
+    result = run(loop.run("list"))
+
+    assert result.status == "complete"
+    assert result.text == "hello.txt"
+    assert session.load()[-1].content == "hello.txt"
+
+
 def test_tool_execute_error_is_seen_by_model():
     provider = ScriptedProvider(
         turns=[

@@ -34,6 +34,7 @@ class VectorHarness:
         self.name = name
         self.llm = llm
         self.system_prompt = system_prompt
+        # 不传会话时只留在内存，同一实例的下一次 run 仍能看见这些消息。
         self.session = session if session is not None else Session.in_memory()
         self.loop = Loop(
             provider=llm,
@@ -42,6 +43,7 @@ class VectorHarness:
             system=system_prompt,
             max_steps=max_steps,
         )
+        # 没装模式时 runner 就是工具循环。装配会把它换成计划或反思，run 走最外层。
         self.runner = self.loop
 
     def add_tool(self, tool: Tool) -> None:
@@ -54,9 +56,11 @@ class VectorHarness:
         模型失败或到达步数上限时抛出 ``ProviderError``。工具调用成功后，
         返回的是模型看到工具结果之后给出的那一段回复。
         """
+        # 自己开事件循环。已经有循环在跑时不能调用这个方法。
         result = asyncio.run(self.runner.run(user_text))
         if result.status == "error":
             raise ProviderError(result.text)
+        # max_steps 等其它状态也收成 ProviderError，文本就是状态名。
         if result.status != "complete":
             raise ProviderError(result.status)
         return result.text

@@ -66,6 +66,7 @@ class ReadFile:
         chunk = lines[start:end]
         numbered = [f"{offset + i}|{line}" for i, line in enumerate(chunk)]
         body = "\n".join(numbered)
+        # 窗口后面还有行时告诉模型，避免它以为文件到此结束。
         if end < len(lines):
             body += _TRUNCATED_SUFFIX
         return body

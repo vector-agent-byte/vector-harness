@@ -82,9 +82,11 @@ class Loop:
         到达 ``max_steps`` 的那一步仍然会执行工具，然后以 ``max_steps`` 返回，
         文本留空。只有 ``ProviderError`` 变成 ``status="error"``。
         """
+        # 用户文本先落盘，这一轮后面的模型请求才能看见它。
         self.session.append(Message(role="user", content=user_text))
         result: RunResult | None = None
 
+        # 一步就是一次模型请求。步数从 1 计，原样写进 RunResult.steps。
         for step in range(1, self.max_steps + 1):
             messages = self.session.load()
             transformed = messages
@@ -96,10 +98,12 @@ class Loop:
                 self.session.replace_all(transformed)
                 messages = transformed
             else:
+                # 序列化结果相同就不写文件，这一步仍使用变换返回的列表。
                 messages = transformed
 
             assistant_text = ""
             tool_calls: list[ToolCall] = []
+            # start 先到，end 再补上完整参数。同一个 id 对上同一次调用。
             pending: dict[str, ToolCall] = {}
 
             try:
@@ -109,7 +113,11 @@ class Loop:
                     # 先把事件交出去，再记进这一步。终端因此能在工具执行前看到命令。
                     self._emit(event)
                     if event.kind == "text_delta":
+                        # 增量拼成这一步的助手正文，和工具调用写在同一条消息里。
                         assistant_text += event.text
+                    elif event.kind == "thinking_delta":
+                        # 思考只给观察方。写进会话会变成下一次请求的正文。
+                        pass
                     elif event.kind == "tool_call_start":
                         pending[event.tool_call_id] = ToolCall(
                             id=event.tool_call_id,
@@ -144,6 +152,7 @@ class Loop:
                 )
                 break
 
+            # 没有工具调用，这一步的文本就是最终回复。
             if not tool_calls:
                 self.session.append(
                     Message(role="assistant", content=assistant_text)
@@ -156,6 +165,7 @@ class Loop:
                 )
                 break
 
+            # 先记下调用再执行。进程若在写回结果前退出，会话里只看得到这次调用。
             self.session.append(
                 Message(
                     role="assistant",
@@ -164,6 +174,7 @@ class Loop:
                 )
             )
 
+            # 同名工具以后登记的为准。
             tool_map = {tool.name: tool for tool in self.tools}
             for tc in tool_calls:
                 # 未知工具、非对象，以及解析失败留下的 ``_invalid_json`` 都不执行。
@@ -200,6 +211,7 @@ class Loop:
                             )
                         )
                     else:
+                        # 正常返回的文本保持成功。以 Error: 开头的说明也是普通结果。
                         self.session.append(
                             Message(
                                 role="tool",
@@ -227,5 +239,6 @@ class Loop:
                 session_path=self.session.path,
             )
 
+        # 三种结束状态都发 run_end。计划和反思的额外请求不经过这里。
         self._emit(ProviderEvent(kind="run_end"))
         return result
