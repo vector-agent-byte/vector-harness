@@ -62,7 +62,7 @@ def main() -> None:
         name="账单助手",
         llm=OpenAICompatibleProvider(),
         system_prompt=SYSTEM,
-        max_steps=12,
+        max_model_turns=12,
     )
     agent.loop.on_event = on_event
     for tool in (

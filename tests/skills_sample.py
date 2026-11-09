@@ -6,6 +6,7 @@
 
 这个文件不会被 pytest 收集。它会调用配置里的模型，并改写 demo/skill-sample。
 技能文件放在 demo/skills。索引写进系统提示，正文要等模型调用 read_skill。
+构造之后会打印运行链和最终工具名。
 """
 
 from __future__ import annotations
@@ -47,6 +48,31 @@ def on_event(event: ProviderEvent) -> None:
         print(f"\n[tool] {event.name} {event.arguments}", flush=True)
 
 
+def runner_chain(runner: object) -> str:
+    """从外到内列出运行对象的类型名，直到工具循环。"""
+    names: list[str] = []
+    current = runner
+    while current is not None:
+        names.append(type(current).__name__)
+        inner = getattr(current, "inner", None)
+        if inner is not None:
+            current = inner
+            continue
+        loop = getattr(current, "loop", None)
+        if loop is not None and loop is not current:
+            current = loop
+            continue
+        break
+    return " -> ".join(names)
+
+
+def show_shape(agent: VectorHarness) -> None:
+    """打印装配之后的运行链和工具名。"""
+    names = ", ".join(tool.name for tool in agent.loop.tools)
+    print(f"运行链: {runner_chain(agent.runner)}")
+    print(f"工具: {names}")
+
+
 def show_history(agent: VectorHarness) -> None:
     print("\n=== 历史 ===")
     for index, message in enumerate(agent.get_history(), start=1):
@@ -79,15 +105,17 @@ def main() -> None:
         plan=True,
         reflect=True,
         tool_hooks=[PrintHook()],
-        on_event=on_event,
-        max_steps=12,
+        loop_on_event=on_event,
+        max_model_turns=12,
     )
     if "- greet:" not in agent.system_prompt:
         print("demo/skills 里没有可用的 greet 技能", file=sys.stderr)
         raise SystemExit(1)
 
     print(f"工作目录: {WORKSPACE}")
-    print(f"技能目录: {SKILLS_DIR}\n")
+    print(f"技能目录: {SKILLS_DIR}")
+    show_shape(agent)
+    print()
     print("=== 装配后的系统提示 ===")
     print(agent.system_prompt)
     print("\n=== 第一轮：按 greet 写文件 ===")

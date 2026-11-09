@@ -217,7 +217,7 @@ def test_reflect_runs_tool_hooks_on_the_same_loop():
     assert hook.calls == 1
 
 
-def test_constructor_on_event_is_used_by_plan_and_loop():
+def test_constructor_loop_on_event_is_used_by_plan_and_loop():
     seen = []
 
     def record(event):
@@ -233,7 +233,7 @@ def test_constructor_on_event_is_used_by_plan_and_loop():
         name="AI助手",
         llm=provider,
         system_prompt="sys",
-        on_event=record,
+        loop_on_event=record,
         plan=True,
     )
 

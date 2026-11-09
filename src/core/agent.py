@@ -22,6 +22,8 @@ class VectorHarness:
 
     ``llm`` 只要有 ``stream(system, messages, tools)``，测试可以传入脚本化的实现。
     ``run`` 在普通脚本里调用。它自己开事件循环，不要放进已经在跑的异步函数里。
+    ``max_model_turns`` 是这一轮里模型最多回答几次。一次回答算一次，中间可以调用工具。
+    要计划和要反思的那几次另算。默认 25。到达上限时 ``run`` 抛出 ``ProviderError``，文本是 ``max_steps``。
     """
 
     def __init__(
@@ -39,11 +41,11 @@ class VectorHarness:
         reflect: bool = False,
         subagents: bool = False,
         tool_hooks: list[ToolHook] | None = None,
-        on_event: Callable[[ProviderEvent], None] | None = None,
+        loop_on_event: Callable[[ProviderEvent], None] | None = None,
         max_chars: int = 80000,
         keep_last: int = 8,
         child_max_steps: int = 10,
-        max_steps: int = 25,
+        max_model_turns: int = 25,
     ) -> None:
         self.name = name
         self.llm = llm
@@ -57,8 +59,8 @@ class VectorHarness:
             session=self.session,
             system=system_prompt,
             tool_hooks=tool_hooks,
-            on_event=on_event,
-            max_steps=max_steps,
+            on_event=loop_on_event,
+            max_steps=max_model_turns,
         )
         # 没装模式时 runner 就是工具循环。装配会把它换成计划或反思，run 走最外层。
         self.runner = self.loop
