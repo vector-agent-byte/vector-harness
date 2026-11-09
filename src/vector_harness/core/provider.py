@@ -13,7 +13,9 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import tomllib
 from collections.abc import AsyncIterator, Callable, Mapping
+from pathlib import Path
 from typing import Any
 
 from openai import (
@@ -26,6 +28,68 @@ from openai import (
 
 from vector_harness.types import Message, ProviderError, ProviderEvent
 
+_CONFIG_KEYS = {
+    "api_key": "VECTOR_API_KEY",
+    "base_url": "VECTOR_BASE_URL",
+    "model": "VECTOR_MODEL",
+}
+
+
+def default_config_path() -> Path:
+    """连接配置的默认位置：家目录下的 ``.vector-harness/config.toml``。"""
+    return Path.home() / ".vector-harness" / "config.toml"
+
+
+def apply_config(env: Mapping[str, str], path: Path) -> dict:
+    """用配置文件填上环境里还没有的连接项。文件不存在就原样返回。
+
+    终端用这个顺序：已经设好的环境变量保留，文件只补空缺。
+    """
+    merged = dict(env)
+    data = _load_config(path)
+    for key, env_name in _CONFIG_KEYS.items():
+        if merged.get(env_name):
+            continue
+        if key not in data:
+            continue
+        merged[env_name] = _config_value(path, key, data[key])
+    return merged
+
+
+def settings_from_config_then_env(env: Mapping[str, str], path: Path) -> dict:
+    """先读配置文件。某一项文件里没有时，再用同名环境变量。"""
+    found: dict[str, str] = {}
+    data = _load_config(path)
+    for key, env_name in _CONFIG_KEYS.items():
+        if key in data:
+            found[env_name] = _config_value(path, key, data[key])
+            continue
+        env_value = env.get(env_name) or ""
+        if env_value:
+            found[env_name] = env_value
+    return found
+
+
+def _load_config(path: Path) -> dict:
+    """读配置文件。文件不存在时当作空配置。"""
+    if not path.is_file():
+        return {}
+    try:
+        with path.open("rb") as handle:
+            data = tomllib.load(handle)
+    except tomllib.TOMLDecodeError as exc:
+        raise ProviderError(f"invalid config {path}: {exc}") from exc
+    if not isinstance(data, dict):
+        raise ProviderError(f"invalid config {path}: root must be a table")
+    return data
+
+
+def _config_value(path: Path, key: str, value: Any) -> str:
+    """配置项必须是非空字符串。"""
+    if not isinstance(value, str) or not value:
+        raise ProviderError(f"invalid config {path}: {key} must be a non-empty string")
+    return value
+
 
 class OpenAICompatibleProvider:
     """一个可替换的模型实现。测试可以传入 ``transport`` 伪造 HTTP 响应。"""
@@ -33,14 +97,35 @@ class OpenAICompatibleProvider:
     def __init__(
         self,
         *,
-        api_key: str,
-        base_url: str,
-        model: str,
+        api_key: str | None = None,
+        base_url: str | None = None,
+        model: str | None = None,
         max_attempts: int = 3,
         sleep: Callable = asyncio.sleep,
         transport: Any = None,
+        config_file: Path | None = None,
     ) -> None:
-        """保存连接信息。``transport`` 只在测试里注入，用来伪造 HTTP 响应。"""
+        """保存连接信息。没传入的连接项先读配置文件，缺的再读环境变量。
+
+        三项都传入时不再读配置文件。``transport`` 只在测试里注入，用来伪造 HTTP 响应。
+        """
+        if api_key is None or base_url is None or model is None:
+            filled = settings_from_config_then_env(
+                os.environ,
+                default_config_path() if config_file is None else config_file,
+            )
+            if api_key is None:
+                api_key = filled.get("VECTOR_API_KEY") or ""
+            if base_url is None:
+                base_url = filled.get("VECTOR_BASE_URL") or ""
+            if model is None:
+                model = filled.get("VECTOR_MODEL") or ""
+        if not api_key:
+            raise ProviderError("VECTOR_API_KEY is not set")
+        if not base_url:
+            raise ProviderError("VECTOR_BASE_URL is not set")
+        if not model:
+            raise ProviderError("VECTOR_MODEL is not set")
         self.api_key = api_key
         self.base_url = base_url.rstrip("/")
         self.model = model

@@ -117,6 +117,60 @@ def test_from_env_missing_model_mentions_variable():
         )
 
 
+def test_constructor_reads_config_file_when_variables_are_absent(tmp_path: Path, monkeypatch):
+    for name in ("VECTOR_API_KEY", "VECTOR_BASE_URL", "VECTOR_MODEL"):
+        monkeypatch.delenv(name, raising=False)
+    config = tmp_path / "config.toml"
+    config.write_text(
+        'api_key = "file-key"\n'
+        'base_url = "https://example.test/v1"\n'
+        'model = "file-model"\n',
+        encoding="utf-8",
+    )
+
+    provider = OpenAICompatibleProvider(config_file=config)
+
+    assert provider.api_key == "file-key"
+    assert provider.base_url == "https://example.test/v1"
+    assert provider.model == "file-model"
+
+
+def test_constructor_prefers_config_file_over_environment(tmp_path: Path, monkeypatch):
+    monkeypatch.setenv("VECTOR_API_KEY", "env-key")
+    monkeypatch.setenv("VECTOR_BASE_URL", "https://env.test/v1")
+    monkeypatch.setenv("VECTOR_MODEL", "env-model")
+    config = tmp_path / "config.toml"
+    config.write_text(
+        'api_key = "file-key"\n'
+        'base_url = "https://example.test/v1"\n'
+        'model = "file-model"\n',
+        encoding="utf-8",
+    )
+
+    provider = OpenAICompatibleProvider(config_file=config)
+
+    assert provider.api_key == "file-key"
+    assert provider.base_url == "https://example.test/v1"
+    assert provider.model == "file-model"
+
+
+def test_constructor_uses_environment_when_config_omits_a_key(tmp_path: Path, monkeypatch):
+    monkeypatch.setenv("VECTOR_API_KEY", "env-key")
+    monkeypatch.delenv("VECTOR_BASE_URL", raising=False)
+    monkeypatch.delenv("VECTOR_MODEL", raising=False)
+    config = tmp_path / "config.toml"
+    config.write_text(
+        'base_url = "https://example.test/v1"\nmodel = "file-model"\n',
+        encoding="utf-8",
+    )
+
+    provider = OpenAICompatibleProvider(config_file=config)
+
+    assert provider.api_key == "env-key"
+    assert provider.base_url == "https://example.test/v1"
+    assert provider.model == "file-model"
+
+
 def test_sse_assembles_text_and_tool_call_arguments():
     handler = RecordedHandler(
         [

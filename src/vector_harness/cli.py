@@ -4,13 +4,16 @@ import argparse
 import asyncio
 import os
 import sys
-import tomllib
 from collections.abc import Iterable, Mapping
 from pathlib import Path
 from uuid import uuid4
 
 from vector_harness.core.loop import Loop
-from vector_harness.core.provider import OpenAICompatibleProvider
+from vector_harness.core.provider import (
+    OpenAICompatibleProvider,
+    apply_config,
+    default_config_path,
+)
 from vector_harness.core.session import Session
 from vector_harness.patterns.compact import Compaction
 from vector_harness.patterns.memory import Memory
@@ -94,42 +97,6 @@ def merged_env(
         merged["VECTOR_MODEL"] = model
     if base_url is not None:
         merged["VECTOR_BASE_URL"] = base_url
-    return merged
-
-
-def default_config_path() -> Path:
-    """连接配置的默认位置：家目录下的 ``.vector-harness/config.toml``。"""
-    return Path.home() / ".vector-harness" / "config.toml"
-
-
-_CONFIG_KEYS = {
-    "api_key": "VECTOR_API_KEY",
-    "base_url": "VECTOR_BASE_URL",
-    "model": "VECTOR_MODEL",
-}
-
-
-def apply_config(env: Mapping[str, str], path: Path) -> dict:
-    """用配置文件填上环境里还没有的连接项。文件不存在就原样返回。"""
-    merged = dict(env)
-    if not path.is_file():
-        return merged
-    try:
-        with path.open("rb") as handle:
-            data = tomllib.load(handle)
-    except tomllib.TOMLDecodeError as exc:
-        raise ProviderError(f"invalid config {path}: {exc}") from exc
-    for key, env_name in _CONFIG_KEYS.items():
-        if merged.get(env_name):
-            continue
-        if key not in data:
-            continue
-        value = data[key]
-        if not isinstance(value, str) or not value:
-            raise ProviderError(
-                f"invalid config {path}: {key} must be a non-empty string"
-            )
-        merged[env_name] = value
     return merged
 
 

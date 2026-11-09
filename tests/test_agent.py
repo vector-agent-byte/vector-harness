@@ -1,13 +1,13 @@
 from __future__ import annotations
 
-from vector_harness import Calculator, ProviderError, SimpleAgent
+from vector_harness import Calculator, ProviderError, VectorHarness
 from tests.scripted import ScriptedProvider, ScriptedTurn
 from vector_harness.types import ToolCall
 
 
 def test_run_returns_text_and_keeps_history():
     provider = ScriptedProvider(turns=[ScriptedTurn(content="我是助手")])
-    agent = SimpleAgent(
+    agent = VectorHarness(
         name="AI助手",
         llm=provider,
         system_prompt="你是一个有用的AI助手",
@@ -36,7 +36,7 @@ def test_add_tool_is_available_on_the_next_run():
             ScriptedTurn(content="14"),
         ]
     )
-    agent = SimpleAgent(name="AI助手", llm=provider, system_prompt="算一下")
+    agent = VectorHarness(name="AI助手", llm=provider, system_prompt="算一下")
     agent.add_tool(Calculator())
 
     response = agent.run("请帮我计算 2 + 3 * 4")
@@ -52,7 +52,7 @@ def test_second_run_appends_to_the_same_history():
     provider = ScriptedProvider(
         turns=[ScriptedTurn(content="第一句"), ScriptedTurn(content="第二句")]
     )
-    agent = SimpleAgent(name="AI助手", llm=provider, system_prompt="sys")
+    agent = VectorHarness(name="AI助手", llm=provider, system_prompt="sys")
 
     agent.run("第一问")
     agent.run("第二问")
@@ -74,7 +74,7 @@ def test_run_raises_when_the_model_fails():
             raise Boom("upstream down")
             yield  # pragma: no cover
 
-    agent = SimpleAgent(name="AI助手", llm=FailingProvider(), system_prompt="sys")
+    agent = VectorHarness(name="AI助手", llm=FailingProvider(), system_prompt="sys")
 
     try:
         agent.run("你好")

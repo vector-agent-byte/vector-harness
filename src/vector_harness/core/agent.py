@@ -15,7 +15,7 @@ from vector_harness.core.session import Session
 from vector_harness.types import Message, ProviderError, Tool
 
 
-class SimpleAgent:
+class VectorHarness:
     """带名字、系统提示和可选工具的助手。
 
     ``llm`` 只要有 ``stream(system, messages, tools)``，测试可以传入脚本化的实现。

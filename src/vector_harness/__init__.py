@@ -4,7 +4,7 @@
 模式类不在这个列表里，这样 ``import vector_harness`` 不会把模式包加载进来。
 """
 
-from vector_harness.core.agent import SimpleAgent
+from vector_harness.core.agent import VectorHarness
 from vector_harness.core.loop import Loop
 from vector_harness.core.provider import OpenAICompatibleProvider
 from vector_harness.core.session import Session
@@ -22,7 +22,7 @@ __all__ = [
     "ProviderError",
     "Session",
     "Loop",
-    "SimpleAgent",
+    "VectorHarness",
     "OpenAICompatibleProvider",
     "ReadFile",
     "EditFile",
