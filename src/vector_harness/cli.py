@@ -15,6 +15,7 @@ from vector_harness.core.session import Session
 from vector_harness.patterns.compact import Compaction
 from vector_harness.patterns.memory import Memory
 from vector_harness.patterns.plan import PlanThenExecute
+from vector_harness.patterns.reflect import Reflect
 from vector_harness.patterns.skills import Skills
 from vector_harness.patterns.subagent import delegate_tool
 from vector_harness.tools.edit import EditFile
@@ -34,9 +35,10 @@ def build_agent(
     memory_path: Path | None = None,
     compact: bool = False,
     plan: bool = False,
+    reflect: bool = False,
     subagents: bool = False,
     max_steps: int = 25,
-) -> Loop | PlanThenExecute:
+) -> Loop | PlanThenExecute | Reflect:
     """按显式开关装配循环。默认只有读、改、命令三个工具，模式不打开就不挂上。"""
     tools: list = [
         ReadFile(workspace),
@@ -75,9 +77,12 @@ def build_agent(
     )
     if delegate is not None:
         delegate.host = loop
+    agent: Loop | PlanThenExecute | Reflect = loop
     if plan:
-        return PlanThenExecute(loop)
-    return loop
+        agent = PlanThenExecute(loop)
+    if reflect:
+        agent = Reflect(agent)
+    return agent
 
 
 def merged_env(
@@ -155,6 +160,7 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--skills", default=None)
     parser.add_argument("--compact", action="store_true")
     parser.add_argument("--plan", action="store_true")
+    parser.add_argument("--reflect", action="store_true")
     parser.add_argument("--subagents", action="store_true")
     parser.add_argument("--max-steps", type=int, default=25)
     parser.add_argument("--model", default=None)
@@ -270,10 +276,13 @@ def main(
         memory_path=_memory_path(args.memory, args.memory_path, workspace),
         compact=args.compact,
         plan=args.plan,
+        reflect=args.reflect,
         subagents=args.subagents,
         max_steps=args.max_steps,
     )
-    loop = agent.loop if isinstance(agent, PlanThenExecute) else agent
+    loop = agent
+    while not isinstance(loop, Loop):
+        loop = loop.loop
     loop.on_event = _on_event
     result = asyncio.run(_run_source(agent, _task_source(args.task, stdin_lines)))
     if result is None or result.status == "complete":
