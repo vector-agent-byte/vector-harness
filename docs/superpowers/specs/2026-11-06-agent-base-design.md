@@ -15,7 +15,7 @@
 
 - 一个可导入的核心：工具循环、模型接口、工具执行、会话记录。
 - 默认工具：读文件、改文件、跑命令。默认入口：终端。
-- 五个模式模块，可以单独或同时接上：上下文压缩、skills、先计划再执行、子 agent、长期记忆。
+- 六个模式模块，可以单独或同时接上：上下文压缩、skills、先计划再执行、反思、子 agent、长期记忆。
 - 核心代码不导入任何模式模块。模式由调用方或终端入口在外面装配。
 - 用假模型做测试，不依赖真实 API key。每种模式有测试能单独说明它的行为。
 - 库的调用方可以只依赖核心和默认工具完成一次带工具的运行。
@@ -28,7 +28,7 @@
 - MCP、多模型厂商的原生 SDK、向量库记忆、自动研究、质量门
 - 子 agent 递归、并行子 agent、执行中途重新规划
 - 人机确认弹窗、命令白名单、安全沙箱
-- 配置文件。连接信息来自环境变量和调用参数
+- 除 `~/.vector-harness/config.toml` 以外的配置文件。该文件只放连接信息：`api_key`、`base_url`、`model`
 
 ## 反目标
 
@@ -43,7 +43,7 @@
 
 - 语言：Python 3.11+
 - 仓库：`vector-harness`。分发包和导入名都叫 `vector_harness`
-- 依赖只允许标准库和 `httpx`。不用 LangChain、Pydantic 或其他 agent 框架
+- 依赖只允许标准库和官方 `openai` 客户端。不用 LangChain 或其他 agent 框架。客户端自己带的 HTTP 库和模型解析库随它安装，业务代码不直接使用它们
 - 运行环境包括 Windows。路径用 `pathlib`。命令在工作目录下通过系统 shell 执行
 - 核心必须能在没有网络的测试里跑完，模型用假实现
 
@@ -77,6 +77,7 @@ src/vector_harness/
     compact.py
     skills.py
     plan.py
+    reflect.py
     subagent.py
     memory.py
   cli.py               # 唯一允许同时导入 core、tools、patterns 的产品入口
@@ -86,7 +87,7 @@ pyproject.toml
 
 依赖方向：
 
-- `core` 只依赖标准库、`httpx` 和 `vector_harness.types`
+- `core` 只依赖标准库、`openai` 和 `vector_harness.types`
 - `tools` 可以依赖 `core` 和 `types`，不能依赖 `patterns` 或 `cli`
 - `patterns` 可以依赖 `core`、`tools`、`types`，不能被 `core` 或 `tools` 导入
 - `cli` 可以依赖以上全部
@@ -105,7 +106,7 @@ pyproject.toml
 
 ### 模型接口
 
-`Provider` 只有一种生产实现：OpenAI Chat Completions 兼容的 HTTP 接口（`/chat/completions`）。用它覆盖官方 OpenAI、OpenRouter、以及多数兼容网关和本地服务。不写 Anthropic、Google 的原生适配器。
+`Provider` 只有一种生产实现：官方 `AsyncOpenAI` 客户端的 Chat Completions（`chat.completions.create`，`stream=True`）。用它覆盖官方 OpenAI、OpenRouter、以及多数兼容网关和本地服务。不写 Anthropic、Google 的原生适配器。循环是异步的，所以用 `AsyncOpenAI`，它和 `OpenAI()` 是同一个包里的同一套调用。
 
 调用方也可以传入任何满足协议的对象。测试使用脚本化的假 Provider：按顺序返回预先写好的助手回合。
 
@@ -113,7 +114,7 @@ pyproject.toml
 
 可重试的失败：HTTP 429 和 5xx，最多 3 次，间隔由实现自定。认证失败、4xx（除 429）不重试，直接以 `error` 结束。
 
-环境变量：`VECTOR_API_KEY`、`VECTOR_BASE_URL`、`VECTOR_MODEL`。库的 `OpenAICompatibleProvider.from_env()` 读取它们。密钥只来自环境变量，不作为命令行参数。
+环境变量：`VECTOR_API_KEY`、`VECTOR_BASE_URL`、`VECTOR_MODEL`。终端还会读 `~/.vector-harness/config.toml` 里的 `api_key`、`base_url`、`model`，只填环境变量和命令行没有给出的项。库的 `OpenAICompatibleProvider.from_env()` 只读环境变量。密钥不作为命令行参数。
 
 ### 工具循环
 
@@ -154,8 +155,8 @@ pyproject.toml
 1. 工具列表从读、改、命令开始。`--skills` 加上读取 skill 正文的工具。`--memory` 加上 `remember`。`--subagents` 加上 `delegate`。
 2. system 文本从终端的短默认提示开始，后接 skills 索引，再接长期记忆文件的现有正文。
 3. `--compact` 时把压缩变换放进 `context_transforms`。
-4. `--plan` 时不直接调用 `Loop.run`，而交给先计划再执行的外层。外层内部的执行循环使用上面已经装好的工具、system 和变换。
-5. 没有 `--plan` 时直接 `Loop.run`。
+4. `--plan` 时不直接调用 `Loop.run`，而交给先计划再执行的外层。外层内部的执行循环使用上面已经装好的工具、system 和变换。没有 `--plan` 时这一层就是 `Loop`。
+5. `--reflect` 时再在最外面包一层。它先调用里面的 `run`，完成后再评判。没有 `--reflect` 时直接跑第 4 步的结果。
 
 ### 上下文压缩
 
@@ -184,6 +185,12 @@ pyproject.toml
 
 这一版不在执行中重新规划。计划调用本身不使用工具，避免计划和执行缠在同一次循环里。
 
+### 反思
+
+模块：`patterns/reflect.py`。
+
+外层包装，不修改 `Loop`。内层跑完且 `status` 为 `complete` 时，用同一次 Provider、不含工具，要求模型返回 JSON：`{"ok": true}` 或 `{"ok": false, "critique": "..."}`。`ok` 为真则保留原回复。为假则把批评写成会话里以 `Reflection:` 开头的一条 `user` 消息，再执行一次，不再对这一次修改做反思。JSON 不合法则再要一次。第二次仍不合法则以 `error` 结束，不进入修改。`max_steps` 和 `error` 不再反思。和计划同时打开时，包在计划外层之外：先计划，再执行，最后反思。
+
 ### 子 agent
 
 模块：`patterns/subagent.py`。
@@ -207,9 +214,9 @@ pyproject.toml
 - 工作目录默认是当前目录，可用 `--workspace` 改。
 - 参数中的剩余文本是一次任务，跑完退出。没有任务文本时进入逐行交互，同一会话接着聊，`/exit` 退出。不设其他斜杠命令。
 - `--session PATH` 接着已有会话。
-- `--skills DIR`、`--memory PATH`、`--compact`、`--plan`、`--subagents` 按上一节装配。可以同时出现。
+- `--skills DIR`、`--memory PATH`、`--compact`、`--plan`、`--reflect`、`--subagents` 按上一节装配。可以同时出现。
 - `--max-steps N` 覆盖默认 25。
-- 模型、基址从环境和可选的 `--model`、`--base-url` 读取。密钥只从 `VECTOR_API_KEY` 读取。缺密钥或缺模型名时，退出并说明缺哪一项，不发起请求。
+- 模型、基址从 `~/.vector-harness/config.toml`、环境和可选的 `--model`、`--base-url` 读取。已有的环境变量和命令行覆盖配置文件。密钥从配置文件的 `api_key` 或 `VECTOR_API_KEY` 读取，不作为命令行参数。缺密钥或缺模型名时，退出并说明缺哪一项，不发起请求。
 
 交互和单次任务都把模型的文本增量打印出来，并在每次命令执行前打印命令字符串。
 
@@ -243,6 +250,7 @@ result = await loop.run("summarize the README")
 - 压缩：消息超过上限时，会话被替换成一条带 `[compacted context]` 的消息加上保留的尾部。摘要调用失败时会话字节内容不变。
 - skills：system 或索引输出里有名字和描述；读取工具能取回正文；未知名字返回错误。
 - 计划：执行阶段出现任何工具调用之前，已经有一次不含工具的计划请求，且会话里有计划文本。计划两次都不是合法 JSON 时 `status` 为 `error`，工作目录没有被默认工具改动。
+- 反思：完成后 `{"ok": true}` 不再执行。`{"ok": false, "critique": "..."}` 把批评写入会话并只再执行一次。两次都不是合法 JSON 时 `status` 为 `error`。`max_steps` 不发起反思请求。
 - 子 agent：父工具结果是子循环的最终文本；子循环收到的工具名单里没有 `delegate`。
 - 记忆：`remember` 追加文件；下一次装配得到的 system 含这段文本。
 - 导入边界：`core`、`tools`、包根 `__init__.py` 的源码不导入 `patterns` 或 `cli`。
@@ -259,6 +267,7 @@ result = await loop.run("summarize the README")
 - 压缩用字符数阈值，摘要失败则跳过。
 - skills 用 SKILL.md（YAML frontmatter + Markdown），索引进提示，正文用工具读取。
 - 计划只做一次，结构化为 JSON 步骤列表，失败重试一次。
+- 反思只在完成后做一次。不通过时只再执行一版，不再评判这一版。JSON 失败重试一次。
 - 子 agent 深度为 1，子会话只在内存里，默认最多 10 步。
 - 长期记忆是一个 Markdown 文件加 `remember`，不做删除和检索。
 - 改文件用唯一字符串替换，不另设写文件工具。

@@ -6,7 +6,7 @@
 
 **Architecture:** `vector_harness.core` 与 `vector_harness.tools` 不导入 `patterns` 或 `cli`。模式要么是 `Loop` 的 `context_transforms`（只有压缩），要么是工具或包住 `Loop` 的外层（计划）。终端 `build_agent` 是唯一的产品装配点。测试用 `tests/scripted.py` 里的假 Provider，不访问网络。
 
-**Tech Stack:** Python 3.11+、标准库 `dataclass`、`httpx`、pytest。包布局 `src/vector_harness`。
+**Tech Stack:** Python 3.11+、标准库 `dataclass`、官方 `openai` 客户端、pytest。包布局 `src/vector_harness`。测试用 `httpx.MockTransport` 伪造 HTTP。
 
 **Spec:** `docs/superpowers/specs/2026-11-06-agent-base-design.md`
 
@@ -14,7 +14,7 @@
 
 - Python 3.11+。运行环境包括 Windows。路径用 `pathlib`，比较前 `resolve()`，再用 `relative_to`。
 - 分发包和导入名都是 `vector_harness`。控制台脚本名 `vector-harness`。
-- 生产依赖只有 `httpx`。不用 LangChain、Pydantic、PyYAML、pytest-asyncio。
+- 生产依赖只有官方 `openai` 客户端。不用 LangChain、PyYAML、pytest-asyncio。客户端自带的库不在业务代码里直接使用。
 - 数据对象用 `dataclass`。API 全是异步。不提供同步包装。
 - 测试函数保持同步，内部用 `asyncio.run`。假模型放在 `tests/scripted.py`，不放进安装包。
 - `core/`、`tools/`、包根 `__init__.py` 的源码不得导入 `vector_harness.patterns` 或 `vector_harness.cli`。
@@ -114,7 +114,7 @@ Expected: FAIL，`vector_harness` 无法导入。
 
 - [ ] **Step 3: Implement the package skeleton**
 
-`pyproject.toml`：`name = "vector_harness"`，`requires-python = ">=3.11"`，`dependencies = ["httpx"]`，可选依赖 `dev = ["pytest"]`，脚本 `vector-harness = "vector_harness.cli:main"`，setuptools 从 `src` 找包。pytest `pythonpath = ["src"]`。
+`pyproject.toml`：`name = "vector_harness"`，`requires-python = ">=3.11"`，`dependencies = ["openai"]`，可选依赖 `dev = ["pytest", "httpx"]`，脚本 `vector-harness = "vector_harness.cli:main"`，setuptools 从 `src` 找包。pytest `pythonpath = ["src"]`。
 
 `types.py` 按 Interfaces 写 `dataclass` 与 `Protocol`。`__init__.py` 只导出 `Message`、`ToolCall`、`RunResult`、`ProviderEvent`。三个子包的 `__init__.py` 为空。然后执行 `python -m pip install -e ".[dev]"`。
 

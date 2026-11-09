@@ -192,8 +192,11 @@ def test_build_agent_wraps_reflect_outside_plan(tmp_path: Path) -> None:
         plan=True,
         reflect=True,
     )
-    assert type(agent) is cli_mod.Reflect
-    assert type(agent.inner) is cli_mod.PlanThenExecute
+    from vector_harness.patterns.plan import PlanThenExecute
+    from vector_harness.patterns.reflect import Reflect
+
+    assert type(agent) is Reflect
+    assert type(agent.inner) is PlanThenExecute
     assert type(agent.loop) is CoreLoop
 
 

@@ -40,6 +40,60 @@ class RaisingProvider:
         yield  # pragma: no cover
 
 
+def test_compaction_keeps_a_split_tool_group_together() -> None:
+    messages = [
+        Message(role="user", content="abcdefghij"),
+        Message(
+            role="assistant",
+            content="",
+            tool_calls=[
+                ToolCall(id="c1", name="fn", arguments={"a": "1"}),
+                ToolCall(id="c2", name="fn", arguments={"a": "2"}),
+            ],
+        ),
+        Message(role="tool", content="one", tool_call_id="c1"),
+        Message(role="tool", content="two", tool_call_id="c2"),
+        Message(role="user", content="stay"),
+    ]
+    snapshot = [message.content for message in messages]
+    provider = ScriptedProvider(turns=[ScriptedTurn(content="SUM")])
+    compaction = Compaction(provider, max_chars=5, keep_last=2)
+
+    result = run(compaction.apply(messages))
+
+    assert [message.content for message in messages] == snapshot
+    assert len(messages) == 5
+    assert result[0].content == "[compacted context]\nSUM"
+    assert [call.id for call in result[1].tool_calls or []] == ["c1", "c2"]
+    assert [(message.role, message.tool_call_id) for message in result[1:]] == [
+        ("assistant", None),
+        ("tool", "c1"),
+        ("tool", "c2"),
+        ("user", None),
+    ]
+    assert result[1] is messages[1]
+    assert result[4] is messages[4]
+
+
+def test_compaction_leaves_input_when_keeping_the_group_empties_the_prefix() -> None:
+    messages = [
+        Message(
+            role="assistant",
+            content="abcdefghij",
+            tool_calls=[ToolCall(id="c1", name="fn", arguments={"a": "1"})],
+        ),
+        Message(role="tool", content="one", tool_call_id="c1"),
+    ]
+    provider = ScriptedProvider(turns=[ScriptedTurn(content="SUM")])
+    compaction = Compaction(provider, max_chars=5, keep_last=1)
+
+    result = run(compaction.apply(messages))
+
+    assert result == messages
+    assert provider.calls == []
+    assert [message.role for message in result] == ["assistant", "tool"]
+
+
 def test_compacts_prefix_and_keeps_last_with_empty_tools() -> None:
     messages = [
         Message(role="user", content="aaaaaaaaaa"),

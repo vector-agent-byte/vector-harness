@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import sys
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -153,6 +154,50 @@ def test_subagent_snapshot_includes_skills_and_memory(tmp_path: Path):
     assert [tool.name for tool in delegate.tools] == ["echo", "read_skill", "remember"]
     assert "later" not in [tool.name for tool in delegate.tools]
     assert "delegate" not in [tool.name for tool in delegate.tools]
+
+
+def test_repeated_compact_replaces_the_existing_transform():
+    agent = _agent()
+
+    attach(agent, compact=True, max_chars=100, keep_last=4)
+    attach(agent, compact=True, max_chars=25, keep_last=1)
+
+    assert len(agent.loop.context_transforms) == 1
+    compaction = agent.loop.context_transforms[0]
+    assert isinstance(compaction, Compaction)
+    assert compaction.max_chars == 25
+    assert compaction.keep_last == 1
+
+
+def test_repeated_plan_and_reflect_stay_one_layer():
+    agent = _agent()
+
+    attach(agent, plan=True, reflect=True)
+    attach(agent, plan=True, reflect=True)
+
+    assert type(agent.runner).__name__ == "Reflect"
+    assert type(agent.runner.inner).__name__ == "PlanThenExecute"
+    assert agent.runner.inner.loop is agent.loop
+    assert agent.runner.loop is agent.loop
+
+
+def test_attach_replaces_a_tool_with_the_same_name(tmp_path: Path):
+    skill = tmp_path / "greet.md"
+    skill.write_text(
+        "---\nname: greet\ndescription: Say hello\n---\nHello\n",
+        encoding="utf-8",
+        newline="\n",
+    )
+    agent = _agent()
+    agent.add_tool(NamedTool("read_skill"))
+
+    attach(agent, skills_dir=tmp_path)
+    attach(agent, skills_dir=tmp_path)
+
+    assert _names(agent).count("read_skill") == 1
+    assert agent.loop.system.count("Skills:") == 1
+    tool = next(item for item in agent.loop.tools if item.name == "read_skill")
+    assert asyncio.run(tool.execute({"name": "greet"})) == "Hello\n"
 
 
 def test_plan_then_reflect_wraps_in_that_order():

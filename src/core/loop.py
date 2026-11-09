@@ -166,7 +166,8 @@ class Loop:
 
             tool_map = {tool.name: tool for tool in self.tools}
             for tc in tool_calls:
-                # 未知工具和不是对象的参数都不执行。None 也落在这里，不能当成 {}。
+                # 未知工具、非对象，以及解析失败留下的 ``_invalid_json`` 都不执行。
+                # None 也落在这里，不能当成 {}。
                 if tc.name not in tool_map:
                     self.session.append(
                         Message(
@@ -176,7 +177,7 @@ class Loop:
                             is_error=True,
                         )
                     )
-                elif not isinstance(tc.arguments, dict):
+                elif not isinstance(tc.arguments, dict) or "_invalid_json" in tc.arguments:
                     self.session.append(
                         Message(
                             role="tool",

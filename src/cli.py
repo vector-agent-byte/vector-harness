@@ -8,6 +8,12 @@ from collections.abc import Iterable, Mapping
 from pathlib import Path
 from uuid import uuid4
 
+from vector_harness.assembly import (
+    DEFAULT_CHILD_MAX_STEPS,
+    DEFAULT_KEEP_LAST,
+    DEFAULT_MAX_CHARS,
+    apply_patterns,
+)
 from vector_harness.core.loop import Loop
 from vector_harness.core.provider import (
     OpenAICompatibleProvider,
@@ -15,12 +21,6 @@ from vector_harness.core.provider import (
     default_config_path,
 )
 from vector_harness.core.session import Session
-from vector_harness.patterns.compact import Compaction
-from vector_harness.patterns.memory import Memory
-from vector_harness.patterns.plan import PlanThenExecute
-from vector_harness.patterns.reflect import Reflect
-from vector_harness.patterns.skills import Skills
-from vector_harness.patterns.subagent import delegate_tool
 from vector_harness.tools.edit import EditFile
 from vector_harness.tools.read import ReadFile
 from vector_harness.tools.shell import Shell
@@ -41,51 +41,36 @@ def build_agent(
     reflect: bool = False,
     subagents: bool = False,
     max_steps: int = 25,
-) -> Loop | PlanThenExecute | Reflect:
-    """按显式开关装配循环。默认只有读、改、命令三个工具，模式不打开就不挂上。"""
-    tools: list = [
-        ReadFile(workspace),
-        EditFile(workspace),
-        Shell(workspace),
-    ]
-    pieces = [DEFAULT_SYSTEM]
-    if skills_dir is not None:
-        skills = Skills(skills_dir)
-        tools.append(skills.read_tool())
-        pieces.append(skills.index_prompt())
-    if memory_path is not None:
-        memory = Memory(memory_path)
-        tools.append(memory.remember_tool())
-        pieces.append(memory.prompt())
-    system = "\n".join(pieces)
-    transforms: list = []
-    if compact:
-        transforms.append(Compaction(provider, max_chars=80000, keep_last=8))
-    delegate = None
-    if subagents:
-        delegate = delegate_tool(
-            provider=provider,
-            tools=list(tools),
-            system=system,
-            context_transforms=transforms,
-        )
-        tools.append(delegate)
+):
+    """按显式开关装配循环。默认只有读、改、命令三个工具，模式不打开就不挂上。
+
+    模式的阈值和包装顺序与 ``attach`` 共用 ``apply_patterns``。
+    """
     loop = Loop(
         provider=provider,
-        tools=tools,
+        tools=[
+            ReadFile(workspace),
+            EditFile(workspace),
+            Shell(workspace),
+        ],
         session=session,
-        system=system,
-        context_transforms=transforms,
+        system=DEFAULT_SYSTEM,
         max_steps=max_steps,
     )
-    if delegate is not None:
-        delegate.host = loop
-    agent: Loop | PlanThenExecute | Reflect = loop
-    if plan:
-        agent = PlanThenExecute(loop)
-    if reflect:
-        agent = Reflect(agent)
-    return agent
+    return apply_patterns(
+        loop,
+        loop,
+        provider=provider,
+        skills_dir=skills_dir,
+        memory_path=memory_path,
+        compact=compact,
+        plan=plan,
+        reflect=reflect,
+        subagents=subagents,
+        max_chars=DEFAULT_MAX_CHARS,
+        keep_last=DEFAULT_KEEP_LAST,
+        child_max_steps=DEFAULT_CHILD_MAX_STEPS,
+    )
 
 
 def merged_env(
@@ -106,8 +91,8 @@ def _parser() -> argparse.ArgumentParser:
         prog="vector-harness",
         description=(
             "Run an agent in a workspace. "
-            "With --compact, fold the context after 80000 characters "
-            "and keep the last 8 messages. "
+            f"With --compact, fold the context after {DEFAULT_MAX_CHARS} characters "
+            f"and keep the last {DEFAULT_KEEP_LAST} messages. "
             "Connection settings can live in ~/.vector-harness/config.toml "
             "as api_key, base_url, and model."
         ),

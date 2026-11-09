@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 
+from vector_harness.core.loop import Loop
 from vector_harness.types import Message, ProviderError, RunResult
 
 _REFLECT_SYSTEM = (
@@ -39,16 +40,13 @@ def _parse_reflection(text: str) -> tuple[bool, str] | None:
 
 class Reflect:
     def __init__(self, inner) -> None:
-        """包住已经装配好的循环或计划外层。反思不往内层加工具。"""
-        self.inner = inner
+        """包住已经装配好的循环或计划外层。反思不往内层加工具。
 
-    @property
-    def loop(self):
-        """最内层的工具循环，终端把观察回调挂在这里。"""
-        current = self.inner
-        while hasattr(current, "loop"):
-            current = current.loop
-        return current
+        ``loop`` 在这里记下工具循环本身。计划外层也同样直接露出工具循环，
+        调用方不用再沿包装链往下找。
+        """
+        self.inner = inner
+        self.loop = inner if isinstance(inner, Loop) else inner.loop
 
     async def _collect(self, messages: list[Message]) -> str:
         """向模型要一份反思。工具列表为空，文本增量走循环上的同一个回调。"""

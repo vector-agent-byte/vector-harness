@@ -36,7 +36,13 @@ base_url = "https://example/v1"
 model = "..."
 ```
 
-环境变量 `VECTOR_API_KEY`、`VECTOR_BASE_URL`、`VECTOR_MODEL` 以及 `--model`、`--base-url` 会覆盖文件里的同名项。密钥没有命令行参数。
+终端和嵌入的优先级不同：
+
+| 调用 | 优先级 |
+| --- | --- |
+| 终端 | `--model`、`--base-url` 覆盖环境变量。配置文件只补还空着的 `api_key`、`base_url`、`model`。密钥没有命令行参数。 |
+| `OpenAICompatibleProvider()` 不传这三项 | 配置文件里有的项优先。文件没写的项再用 `VECTOR_API_KEY`、`VECTOR_BASE_URL`、`VECTOR_MODEL`。 |
+| 构造时三项都传入 | 只用传入的值。 |
 
 ### 模式
 
@@ -124,7 +130,13 @@ base_url = "https://example/v1"
 model = "..."
 ```
 
-`VECTOR_API_KEY`, `VECTOR_BASE_URL`, `VECTOR_MODEL`, `--model`, and `--base-url` override the file. There is no command-line flag for the key.
+The terminal and the embeddable provider resolve settings differently:
+
+| Call | Precedence |
+| --- | --- |
+| Terminal | `--model` and `--base-url` override environment variables. The file fills only `api_key`, `base_url`, and `model` that are still empty. There is no command-line flag for the key. |
+| `OpenAICompatibleProvider()` with any of the three omitted | Values in the file win. Missing file entries fall back to `VECTOR_API_KEY`, `VECTOR_BASE_URL`, and `VECTOR_MODEL`. |
+| All three passed to the constructor | Only the passed values are used. |
 
 ### Patterns
 
