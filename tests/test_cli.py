@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import io
-import os
 import subprocess
 import sys
 from pathlib import Path
@@ -123,15 +122,10 @@ def test_build_agent_wires_all_five_patterns(tmp_path: Path):
 
 def test_help_mentions_compaction_bounds_and_not_api_key():
     root = Path(__file__).resolve().parents[1]
-    env = os.environ.copy()
-    src = str(root / "src")
-    previous = env.get("PYTHONPATH")
-    env["PYTHONPATH"] = src if not previous else src + os.pathsep + previous
     proc = subprocess.run(
         [sys.executable, "-m", "vector_harness.cli", "--help"],
         capture_output=True,
         text=True,
-        env=env,
         cwd=root,
         check=False,
     )

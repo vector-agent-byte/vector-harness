@@ -1,7 +1,7 @@
 import ast
 from pathlib import Path
 
-SRC_ROOT = Path(__file__).resolve().parents[1] / "src" / "vector_harness"
+SRC_ROOT = Path(__file__).resolve().parents[1] / "src"
 
 src_roots = [
     SRC_ROOT / "__init__.py",
@@ -33,7 +33,7 @@ def imports_of(paths: list[Path]) -> list[str]:
                         name == forbidden or name.startswith(forbidden + ".")
                         for forbidden in FORBIDDEN
                     ):
-                        offenders.append(f"{path.relative_to(SRC_ROOT.parent.parent)}: {name}")
+                        offenders.append(f"{path.relative_to(SRC_ROOT.parent)}: {name}")
     return sorted(offenders)
 
 

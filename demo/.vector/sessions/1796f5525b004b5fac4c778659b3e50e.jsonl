@@ -1,0 +1,11 @@
+{"role": "user", "content": "Plan:\n1. printf 'plan-ok\\ndone\\n' > notes.txt", "tool_calls": null, "tool_call_id": null, "is_error": false}
+{"role": "user", "content": "创建 notes.txt，内容两行：第一行 plan-ok，第二行 done", "tool_calls": null, "tool_call_id": null, "is_error": false}
+{"role": "assistant", "content": "", "tool_calls": [{"id": "call_00_ET_PVZchLUccW9G4JZCRsE57842", "name": "shell", "arguments": {"command": "printf 'plan-ok\\ndone\\n' > notes.txt && cat notes.txt"}}], "tool_call_id": null, "is_error": false}
+{"role": "tool", "content": "exit_code=1\nstdout:\n\nstderr:\n'printf' 不是内部或外部命令，也不是可运行的程序\n或批处理文件。\n", "tool_calls": null, "tool_call_id": "call_00_ET_PVZchLUccW9G4JZCRsE57842", "is_error": false}
+{"role": "assistant", "content": "", "tool_calls": [{"id": "call_00_T9R1lDeV4cvO7kn5lfAk0880", "name": "shell", "arguments": {"command": "powershell -NoProfile -Command \"Set-Content -Path notes.txt -Value @('plan-ok','done') -Encoding utf8\" && type notes.txt"}}], "tool_call_id": null, "is_error": false}
+{"role": "tool", "content": "exit_code=0\nstdout:\n锘縫lan-ok\ndone\n\nstderr:\n", "tool_calls": null, "tool_call_id": "call_00_T9R1lDeV4cvO7kn5lfAk0880", "is_error": false}
+{"role": "assistant", "content": "", "tool_calls": [{"id": "call_00_drWSzzwFpBylNPdjazUp1025", "name": "shell", "arguments": {"command": "powershell -NoProfile -Command \"[System.IO.File]::WriteAllText('notes.txt', \\\"plan-ok`r`ndone`r`n\\\", (New-Object System.Text.UTF8Encoding $false))\" && type notes.txt"}}], "tool_call_id": null, "is_error": false}
+{"role": "tool", "content": "exit_code=0\nstdout:\nplan-ok\ndone\n\nstderr:\n", "tool_calls": null, "tool_call_id": "call_00_drWSzzwFpBylNPdjazUp1025", "is_error": false}
+{"role": "assistant", "content": "", "tool_calls": [{"id": "call_00_ET_kdRcuThHA1HC3thC9XGt9717", "name": "read_file", "arguments": {"path": "notes.txt"}}], "tool_call_id": null, "is_error": false}
+{"role": "tool", "content": "1|plan-ok\n2|done", "tool_calls": null, "tool_call_id": "call_00_ET_kdRcuThHA1HC3thC9XGt9717", "is_error": false}
+{"role": "assistant", "content": "已创建 `notes.txt`，内容为两行：\n\n```\nplan-ok\ndone\n```\n\n说明：当前环境是 Windows cmd，`printf` 不可用，因此改用 PowerShell 以无 BOM 的 UTF-8 写入文件。", "tool_calls": null, "tool_call_id": null, "is_error": false}

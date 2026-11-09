@@ -1,0 +1,4 @@
+{"role": "user", "content": "记住：项目代号是 vector-harness", "tool_calls": null, "tool_call_id": null, "is_error": false}
+{"role": "assistant", "content": "", "tool_calls": [{"id": "call_00_0gKoKb0MRDMFt5aUBG6Q9058", "name": "remember", "arguments": {"text": "项目代号是 vector-harness"}}], "tool_call_id": null, "is_error": false}
+{"role": "tool", "content": "", "tool_calls": null, "tool_call_id": "call_00_0gKoKb0MRDMFt5aUBG6Q9058", "is_error": false}
+{"role": "assistant", "content": "已记住：项目代号是 **vector-harness**。\n\n后续需要用到这个代号时，我会直接引用它。有什么要接着做的吗？", "tool_calls": null, "tool_call_id": null, "is_error": false}
