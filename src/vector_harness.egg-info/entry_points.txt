@@ -1,0 +1,2 @@
+[console_scripts]
+vector-harness = vector_harness.cli:main

@@ -6,9 +6,41 @@
 
 from __future__ import annotations
 
+from collections.abc import AsyncIterator
 from dataclasses import dataclass
+from enum import StrEnum
 from pathlib import Path
-from typing import Protocol, runtime_checkable
+from typing import Any, Protocol, runtime_checkable
+
+
+class Role(StrEnum):
+    """会话消息的角色。值就是落盘和比较时用的字符串。"""
+
+    USER = "user"
+    ASSISTANT = "assistant"
+    TOOL = "tool"
+
+
+class RunStatus(StrEnum):
+    """一轮运行的结束状态。"""
+
+    COMPLETE = "complete"
+    MAX_STEPS = "max_steps"
+    ERROR = "error"
+
+
+class EventKind(StrEnum):
+    """模型流和循环向外发出的事件种类。"""
+
+    THINKING_DELTA = "thinking_delta"
+    TEXT_DELTA = "text_delta"
+    TOOL_CALL_START = "tool_call_start"
+    TOOL_CALL_END = "tool_call_end"
+    RUN_END = "run_end"
+
+
+# 参数 JSON 解析失败时放进 arguments 的键。循环见到它就拒绝执行。
+INVALID_TOOL_ARGUMENTS = "_invalid_json"
 
 
 class ProviderError(Exception):
@@ -139,4 +171,34 @@ class ToolHook(Protocol):
         self, call: ToolCall, messages: list[Message]
     ) -> ToolHookResult | None:
         """返回放行、改参数或拒绝。返回 None 表示不改、不拒绝。"""
+        ...
+
+
+@runtime_checkable
+class Model(Protocol):
+    """能按会话流式回答的模型。
+
+    测试里的脚本化模型和 ``OpenAICompatibleProvider`` 都满足这个协议。
+    循环只依赖 ``stream``，不依赖具体客户端。
+    """
+
+    def stream(
+        self, *, system: str, messages: list[Message], tools: list
+    ) -> AsyncIterator[ProviderEvent]:
+        """产出文本增量、思考增量和工具调用事件。"""
+        ...
+
+
+@runtime_checkable
+class Runnable(Protocol):
+    """能跑一轮用户文本的对象。
+
+    工具循环、计划和反思都实现它。``loop`` 是最内层的工具循环，
+    调用方用它挂观察回调，不用再沿包装链往下找。
+    """
+
+    loop: Any
+
+    async def run(self, user_text: str) -> RunResult:
+        """执行一轮，返回完整结果。"""
         ...

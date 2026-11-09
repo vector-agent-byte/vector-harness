@@ -3,6 +3,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from vector_harness.core.loop import Loop
+
 
 def _parse_frontmatter(text: str) -> tuple[dict[str, str], str] | None:
     """解析 ``SKILL.md`` 开头的 YAML 风格前言。缺名字或说明时返回 None。"""
@@ -95,3 +97,10 @@ class _ReadSkill:
         if skill is None:
             return f"Error: Unknown skill: {skill_name}"
         return skill.body
+
+
+def attach_skills(loop: Loop, directory: Path) -> None:
+    """把技能索引进系统提示，并装上 ``read_skill``。同名工具就地替换。"""
+    skills = Skills(directory)
+    loop.install_prompt(skills.index_prompt())
+    loop.replace_tool(skills.read_tool())

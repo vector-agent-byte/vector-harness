@@ -4,6 +4,7 @@ from dataclasses import dataclass, field
 from datetime import date
 from pathlib import Path
 
+from vector_harness.core.loop import Loop
 from vector_harness.types import Tool
 
 
@@ -45,3 +46,10 @@ class Memory:
     def remember_tool(self) -> Tool:
         """返回追加记忆的工具，由调用方放进工具列表。"""
         return RememberTool(path=self.path)
+
+
+def attach_memory(loop: Loop, path: Path) -> None:
+    """把记忆原文接进系统提示，并装上 ``remember``。同名工具就地替换。"""
+    memory = Memory(path)
+    loop.install_prompt(memory.prompt())
+    loop.replace_tool(memory.remember_tool())

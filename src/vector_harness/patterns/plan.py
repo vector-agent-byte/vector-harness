@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 
 from vector_harness.core.loop import Loop
+from vector_harness.core.turn import collect_text
 from vector_harness.types import Message, ProviderError, RunResult
 
 _PLAN_SYSTEM = 'Reply with JSON only, of the form {"steps": ["..."]}.'
@@ -39,17 +40,12 @@ class PlanThenExecute:
 
     async def _collect_plan(self, user_content: str) -> str:
         """向模型要一份计划。工具列表为空，文本增量走循环上的同一个回调。"""
-        text = ""
-        async for event in self.loop.provider.stream(
+        return await collect_text(
+            self.loop.provider,
             system=_PLAN_SYSTEM,
             messages=[Message(role="user", content=user_content)],
-            tools=[],
-        ):
-            if self.loop.on_event is not None:
-                self.loop.on_event(event)
-            if event.kind == "text_delta":
-                text += event.text
-        return text
+            on_event=self.loop.on_event,
+        )
 
     async def run(self, user_text: str) -> RunResult:
         """先要计划，最多两次。成功后把计划写入会话再执行，步数包含计划请求。"""

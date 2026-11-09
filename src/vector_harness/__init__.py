@@ -12,7 +12,17 @@ from vector_harness.tools.calculator import Calculator
 from vector_harness.tools.edit import EditFile
 from vector_harness.tools.read import ReadFile
 from vector_harness.tools.shell import Shell
-from vector_harness.types import Message, ProviderError, ProviderEvent, RunResult, ToolCall
+from vector_harness.types import (
+    EventKind,
+    Message,
+    Model,
+    ProviderError,
+    ProviderEvent,
+    Role,
+    RunResult,
+    RunStatus,
+    ToolCall,
+)
 
 __all__ = [
     "Message",
@@ -20,6 +30,10 @@ __all__ = [
     "RunResult",
     "ProviderEvent",
     "ProviderError",
+    "Role",
+    "RunStatus",
+    "EventKind",
+    "Model",
     "Session",
     "Loop",
     "VectorHarness",

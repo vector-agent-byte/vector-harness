@@ -72,3 +72,18 @@ def delegate_tool(
         tool_hooks=tool_hooks,
         max_steps=max_steps,
     )
+
+
+def attach_delegate(loop: Loop, *, provider, max_steps: int) -> None:
+    """装上 ``delegate``。子循环拿不到这个工具，事件回到父循环的观察回调。"""
+    child_tools = [tool for tool in loop.tools if tool.name != "delegate"]
+    delegate = delegate_tool(
+        provider=provider,
+        tools=child_tools,
+        system=loop.system,
+        context_transforms=loop.context_transforms,
+        tool_hooks=loop.tool_hooks,
+        max_steps=max_steps,
+    )
+    loop.replace_tool(delegate)
+    delegate.host = loop

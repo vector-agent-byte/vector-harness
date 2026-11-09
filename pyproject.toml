@@ -14,11 +14,5 @@ dev = ["pytest", "httpx"]
 [project.scripts]
 vector-harness = "vector_harness.cli:main"
 
-[tool.setuptools]
-packages = [
-    "vector_harness",
-    "vector_harness.core",
-    "vector_harness.tools",
-    "vector_harness.patterns",
-]
-package-dir = { "vector_harness" = "src" }
+[tool.setuptools.packages.find]
+where = ["src"]

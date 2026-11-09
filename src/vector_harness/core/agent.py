@@ -10,11 +10,18 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Callable
 from pathlib import Path
-from typing import Any
 
 from vector_harness.core.loop import Loop
 from vector_harness.core.session import Session
-from vector_harness.types import Message, ProviderError, ProviderEvent, Tool, ToolHook
+from vector_harness.types import (
+    Message,
+    Model,
+    ProviderError,
+    ProviderEvent,
+    Runnable,
+    Tool,
+    ToolHook,
+)
 
 
 class VectorHarness:
@@ -30,7 +37,7 @@ class VectorHarness:
         self,
         *,
         name: str,
-        llm: Any,
+        llm: Model,
         system_prompt: str,
         session: Session | None = None,
         tools: list[Tool] | None = None,
@@ -63,7 +70,7 @@ class VectorHarness:
             max_steps=max_model_turns,
         )
         # 没装模式时 runner 就是工具循环。装配会把它换成计划或反思，run 走最外层。
-        self.runner = self.loop
+        self.runner: Runnable = self.loop
         # 这些阈值和 attach 的默认值相同。不打开任何模式时不加载模式包。
         if (
             skills_dir is not None

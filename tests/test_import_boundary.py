@@ -1,7 +1,7 @@
 import ast
 from pathlib import Path
 
-SRC_ROOT = Path(__file__).resolve().parents[1] / "src"
+SRC_ROOT = Path(__file__).resolve().parents[1] / "src" / "vector_harness"
 
 src_roots = [
     SRC_ROOT / "__init__.py",

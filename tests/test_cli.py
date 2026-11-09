@@ -321,7 +321,7 @@ def test_shell_command_is_printed_before_execute(tmp_path: Path, monkeypatch):
     buffer = io.StringIO()
     monkeypatch.setattr(sys, "stdout", buffer)
     monkeypatch.setattr(
-        "vector_harness.cli._now", lambda: datetime(2026, 11, 9, 17, 1, 3)
+        "vector_harness.cli_render._now", lambda: datetime(2026, 11, 9, 17, 1, 3)
     )
 
     seen: dict[str, str] = {}
@@ -369,7 +369,7 @@ def test_child_events_are_marked(tmp_path: Path, monkeypatch):
     buffer = io.StringIO()
     monkeypatch.setattr(sys, "stdout", buffer)
     monkeypatch.setattr(
-        "vector_harness.cli._now", lambda: datetime(2026, 11, 9, 17, 37, 38)
+        "vector_harness.cli_render._now", lambda: datetime(2026, 11, 9, 17, 37, 38)
     )
     provider = ScriptedProvider(
         turns=[
@@ -410,7 +410,7 @@ def test_color_paints_reply_and_shell_command(tmp_path: Path, monkeypatch):
     monkeypatch.setenv("VECTOR_COLOR", "always")
     monkeypatch.delenv("NO_COLOR", raising=False)
     monkeypatch.setattr(
-        "vector_harness.cli._now", lambda: datetime(2026, 11, 9, 17, 1, 3)
+        "vector_harness.cli_render._now", lambda: datetime(2026, 11, 9, 17, 1, 3)
     )
     monkeypatch.setattr(sys, "stdout", buffer)
     provider = ScriptedProvider(
@@ -449,7 +449,7 @@ def test_read_file_is_printed_on_the_same_tool_column(tmp_path: Path, monkeypatc
     buffer = io.StringIO()
     monkeypatch.setattr(sys, "stdout", buffer)
     monkeypatch.setattr(
-        "vector_harness.cli._now", lambda: datetime(2026, 11, 9, 17, 1, 3)
+        "vector_harness.cli_render._now", lambda: datetime(2026, 11, 9, 17, 1, 3)
     )
     provider = ScriptedProvider(
         turns=[
@@ -478,7 +478,7 @@ def test_thinking_is_printed_before_the_reply(tmp_path: Path, monkeypatch):
     buffer = io.StringIO()
     monkeypatch.setattr(sys, "stdout", buffer)
     monkeypatch.setattr(
-        "vector_harness.cli._now", lambda: datetime(2026, 11, 9, 17, 1, 3)
+        "vector_harness.cli_render._now", lambda: datetime(2026, 11, 9, 17, 1, 3)
     )
     provider = ScriptedProvider(
         turns=[ScriptedTurn(thinking="先看目录", content="hello.txt")]

@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import json
 
+from vector_harness.core.loop import Loop
+from vector_harness.core.turn import collect_text
 from vector_harness.types import Message
 
 _SUMMARY_SYSTEM = "Summarize the conversation prefix. Preserve facts, decisions, and file paths."
@@ -87,14 +89,12 @@ class Compaction:
 
         summary_messages = [Message(role="user", content=_format_prefix(prefix))]
         try:
-            text = ""
-            async for event in self.provider.stream(
+            text = await collect_text(
+                self.provider,
                 system=_SUMMARY_SYSTEM,
                 messages=summary_messages,
-                tools=[],
-            ):
-                if event.kind == "text_delta":
-                    text += event.text
+                on_event=None,
+            )
         except Exception as exc:
             self.last_failure = str(exc)
             return list(messages)
@@ -105,3 +105,16 @@ class Compaction:
             content=f"[compacted context]\n{text}",
         )
         return [compacted, *tail]
+
+
+def attach_compaction(loop: Loop, provider, *, max_chars: int, keep_last: int) -> None:
+    """压缩只留一份。再次装配时更新阈值，不追加第二个变换。"""
+    for existing in loop.context_transforms or []:
+        if isinstance(existing, Compaction):
+            existing.provider = provider
+            existing.max_chars = max_chars
+            existing.keep_last = keep_last
+            return
+    loop.context_transforms.append(
+        Compaction(provider, max_chars=max_chars, keep_last=keep_last)
+    )

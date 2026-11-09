@@ -10,54 +10,8 @@ import json
 from dataclasses import dataclass
 from pathlib import Path
 
-from vector_harness.types import Message, ToolCall
-
-
-def _message_to_dict(message: Message) -> dict:
-    """收成可往返的 JSON 对象。没有工具调用时 ``tool_calls`` 写成 null。"""
-    tool_calls: list[dict] | None
-    if message.tool_calls is None:
-        tool_calls = None
-    else:
-        tool_calls = [
-            {
-                "id": tc.id,
-                "name": tc.name,
-                "arguments": tc.arguments,
-            }
-            for tc in message.tool_calls
-        ]
-    return {
-        "role": message.role,
-        "content": message.content,
-        "tool_calls": tool_calls,
-        "tool_call_id": message.tool_call_id,
-        "is_error": message.is_error,
-    }
-
-
-def _message_from_dict(data: dict) -> Message:
-    """从一行 JSON 还原消息。缺 ``is_error`` 时当作成功的工具结果。"""
-    raw_tool_calls = data.get("tool_calls")
-    tool_calls: list[ToolCall] | None
-    if raw_tool_calls is None:
-        tool_calls = None
-    else:
-        tool_calls = [
-            ToolCall(
-                id=item["id"],
-                name=item["name"],
-                arguments=item["arguments"],
-            )
-            for item in raw_tool_calls
-        ]
-    return Message(
-        role=data["role"],
-        content=data["content"],
-        tool_calls=tool_calls,
-        tool_call_id=data.get("tool_call_id"),
-        is_error=data.get("is_error", False),
-    )
+from vector_harness.core.codec import message_from_dict, message_to_dict
+from vector_harness.types import Message
 
 
 @dataclass
@@ -90,7 +44,7 @@ class Session:
             # 空行不是消息。文件末尾多出来的换行落在这里。
             if not line.strip():
                 continue
-            messages.append(_message_from_dict(json.loads(line)))
+            messages.append(message_from_dict(json.loads(line)))
         return messages
 
     def append(self, message: Message) -> None:
@@ -100,7 +54,7 @@ class Session:
             return
         self.path.parent.mkdir(parents=True, exist_ok=True)
         # 中文原样写入。每条独占一行，中断时最多损坏刚写下的这一行。
-        line = json.dumps(_message_to_dict(message), ensure_ascii=False)
+        line = json.dumps(message_to_dict(message), ensure_ascii=False)
         with self.path.open("a", encoding="utf-8") as f:
             f.write(line + "\n")
 
@@ -110,7 +64,7 @@ class Session:
             self._messages = list(messages)
             return
         self.path.parent.mkdir(parents=True, exist_ok=True)
-        lines = [json.dumps(_message_to_dict(m), ensure_ascii=False) for m in messages]
+        lines = [json.dumps(message_to_dict(m), ensure_ascii=False) for m in messages]
         content = "\n".join(lines)
         # 最后一条也以换行结束，和 append 的行格式一致。这是整份覆盖。
         if lines:

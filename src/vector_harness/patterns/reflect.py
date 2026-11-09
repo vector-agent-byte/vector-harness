@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import json
 
-from vector_harness.core.loop import Loop
+from vector_harness.core.turn import collect_text
 from vector_harness.types import Message, ProviderError, RunResult
 
 _REFLECT_SYSTEM = (
@@ -42,26 +42,21 @@ class Reflect:
     def __init__(self, inner) -> None:
         """包住已经装配好的循环或计划外层。反思不往内层加工具。
 
-        ``loop`` 在这里记下工具循环本身。计划外层也同样直接露出工具循环，
+        ``loop`` 取内层已经露出的工具循环。计划和工具循环都提供这个属性，
         调用方不用再沿包装链往下找。
         """
         self.inner = inner
-        self.loop = inner if isinstance(inner, Loop) else inner.loop
+        self.loop = inner.loop
 
     async def _collect(self, messages: list[Message]) -> str:
         """向模型要一份反思。工具列表为空，文本增量走循环上的同一个回调。"""
         host = self.loop
-        text = ""
-        async for event in host.provider.stream(
+        return await collect_text(
+            host.provider,
             system=_REFLECT_SYSTEM,
             messages=messages,
-            tools=[],
-        ):
-            if host.on_event is not None:
-                host.on_event(event)
-            if event.kind == "text_delta":
-                text += event.text
-        return text
+            on_event=host.on_event,
+        )
 
     async def run(self, user_text: str) -> RunResult:
         """先跑内层。完成后最多要两次反思。不通过时只再执行一次。"""
