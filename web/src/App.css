@@ -1,0 +1,267 @@
+.app {
+  display: flex;
+  height: 100%;
+  min-height: 0;
+  color: #1c1c1c;
+  background: #fff;
+  font: 16px/1.45 system-ui, "Segoe UI", sans-serif;
+}
+
+.sidebar {
+  width: 280px;
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  border-right: 1px solid #e4e4e4;
+  background: #f7f7f8;
+}
+
+.sidebar-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 12px;
+  border-bottom: 1px solid #e4e4e4;
+}
+
+.sidebar-head h1 {
+  margin: 0;
+  font-size: 18px;
+  font-weight: 650;
+}
+
+.sidebar-head button,
+.composer button {
+  font: inherit;
+  padding: 8px 12px;
+  border: 1px solid #c8c8c8;
+  border-radius: 8px;
+  background: #fff;
+  cursor: pointer;
+}
+
+.sidebar-head button:hover,
+.composer button:hover:not(:disabled) {
+  background: #f0f0f0;
+}
+
+.session-list {
+  list-style: none;
+  margin: 0;
+  padding: 8px;
+  overflow: auto;
+  flex: 1;
+}
+
+.session-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  width: 100%;
+  text-align: left;
+  font: inherit;
+  color: inherit;
+  background: transparent;
+  border: 1px solid transparent;
+  border-left: 3px solid transparent;
+  border-radius: 8px;
+  padding: 8px 10px;
+  cursor: pointer;
+}
+
+.session-item.is-open {
+  background: #e7f0ff;
+  border-left-color: #1a5fb4;
+  font-weight: 650;
+}
+
+.session-item.is-running {
+  background: #fff6e0;
+  border-color: #e2c27a;
+}
+
+.session-item.is-open.is-running {
+  background: #e7f0ff;
+  border-color: #c47d00;
+  border-left-color: #1a5fb4;
+}
+
+.session-title {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.running-mark {
+  flex: none;
+  color: #8a5a00;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.running-mark::before {
+  content: "";
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  margin-right: 4px;
+  border-radius: 50%;
+  background: #c47d00;
+}
+
+.main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.current-title {
+  flex: none;
+  margin: 0;
+  padding: 12px 16px;
+  border-bottom: 1px solid #e4e4e4;
+  font-size: 18px;
+  font-weight: 650;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.transcript {
+  flex: 1;
+  overflow: auto;
+  padding: 16px;
+  min-height: 0;
+}
+
+.empty {
+  flex: 1;
+  display: grid;
+  place-items: center;
+  color: #666;
+}
+
+.message-row {
+  display: flex;
+  margin: 8px 0;
+}
+
+.message-row.user {
+  justify-content: flex-end;
+}
+
+.message-row.assistant,
+.message-row.tool {
+  justify-content: flex-start;
+}
+
+.bubble {
+  max-width: min(70%, 640px);
+  padding: 8px 12px;
+  border-radius: 12px;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.user .bubble {
+  background: #1a5fb4;
+  color: #fff;
+}
+
+.assistant .bubble {
+  background: #f2f2f2;
+  color: #111;
+}
+
+.tool .bubble {
+  background: #f7f7f7;
+  border: 1px solid #ddd;
+  font-family: ui-monospace, Consolas, monospace;
+  font-size: 13px;
+}
+
+.tool.is-error .bubble {
+  background: #fdecea;
+  border-color: #b00020;
+  color: #7f1010;
+}
+
+.fail {
+  font-family: system-ui, "Segoe UI", sans-serif;
+  font-weight: 700;
+  margin-bottom: 4px;
+}
+
+.tool-name {
+  display: inline-block;
+  margin-top: 6px;
+  margin-right: 6px;
+  padding: 2px 8px;
+  border: 1px solid #ccc;
+  border-radius: 999px;
+  background: #fff;
+  color: #333;
+  font-family: system-ui, "Segoe UI", sans-serif;
+  font-size: 12px;
+}
+
+.user .tool-name {
+  color: #123;
+}
+
+.thinking {
+  margin-bottom: 6px;
+  color: #8a8a8a;
+  font-size: 13px;
+  opacity: 0.8;
+  white-space: pre-wrap;
+}
+
+.error-banner,
+.status-banner {
+  margin: 0 16px;
+  padding: 8px 12px;
+  border-radius: 8px;
+}
+
+.error-banner {
+  margin-top: 12px;
+  background: #fdecea;
+  color: #7f1010;
+}
+
+.status-banner {
+  margin-bottom: 8px;
+  background: #fff6e0;
+  color: #6b4e00;
+  font-weight: 650;
+}
+
+.composer {
+  display: flex;
+  gap: 8px;
+  padding: 12px;
+  border-top: 1px solid #e6e6e6;
+}
+
+.composer textarea {
+  flex: 1;
+  resize: vertical;
+  min-height: 44px;
+  max-height: 160px;
+  font: inherit;
+  padding: 8px;
+  border: 1px solid #ccc;
+  border-radius: 8px;
+}
+
+.composer button:disabled,
+.composer textarea:disabled {
+  cursor: not-allowed;
+  opacity: 0.6;
+}

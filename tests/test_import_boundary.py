@@ -9,7 +9,7 @@ src_roots = [
     *sorted((SRC_ROOT / "tools").glob("*.py")),
 ]
 
-FORBIDDEN = ("vector_harness.patterns", "vector_harness.cli")
+FORBIDDEN = ("vector_harness.patterns", "vector_harness.cli", "vector_harness.web")
 
 
 def _module_names(node: ast.AST):
@@ -91,5 +91,6 @@ def test_package_root_does_not_import_patterns_or_cli():
 
     assert "vector_harness.patterns" not in sys.modules
     assert "vector_harness.cli" not in sys.modules
+    assert "vector_harness.web" not in sys.modules
     offenders = imports_of(src_roots)
     assert offenders == []

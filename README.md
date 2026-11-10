@@ -46,7 +46,7 @@ model = "..."
 
 ### 模式
 
-模式各自一个模块，由调用方或终端显式装配。可以单独打开，也可以同时打开。默认全部关闭。
+模式各自一个模块，由调用方或终端显式装配。可以单独打开，也可以同时打开。默认全部关闭。文件怎么分工、一次任务怎么走，见 [docs/architecture.md](docs/architecture.md)。
 
 | 模式 | 作用 |
 |------|------|
@@ -57,9 +57,47 @@ model = "..."
 | **子 agent** | 把一项任务交给一层子循环，子循环不能再派生子 agent |
 | **长期记忆** | 跨会话的 Markdown 文件，用工具追加事实 |
 
+计划和反思包在工具循环外面，不并排。只开计划时是「计划 → 工具循环」。只开反思时是「反思 → 工具循环」。两个都开时，反思在外、计划在内。反思不通过时再跑一轮内层；内层是计划的话，这一轮会重新要计划。
+
+### 嵌入
+
+终端之外，普通脚本用 `VectorHarness`。`llm` 只要有 `stream(system, messages, tools)`。`run` 自己开事件循环，放在普通脚本里，不要放进已经在跑的异步函数。
+
+```python
+from vector_harness import Calculator, OpenAICompatibleProvider, VectorHarness
+
+agent = VectorHarness(
+    name="助手",
+    llm=OpenAICompatibleProvider(),
+    system_prompt="算术必须调用 calculator。",
+    tools=[Calculator()],
+)
+text = agent.run("2 + 3 * 4 等于多少")
+```
+
+创建时可以同时传入 `skills_dir`、`plan`、`reflect` 等，参数和终端开关对应。这些开关都关闭时，构造函数不加载模式包。已经建好的实例用 `from vector_harness import attach` 再装。`import vector_harness` 不加载模式。
+
+不连终端的样例：`python tests/invoice_sample.py` 做账单，`python tests/skills_sample.py` 同时打开技能、计划和反思。pytest 不收集这两个文件。
+
+### 本机网页
+
+在仓库根目录启动：
+
+```powershell
+python -m vector_harness.web --workspace .
+```
+
+页面在 `http://127.0.0.1:8787/`。
+
+开发页面时另开一个终端，在 `web/` 执行 `npm install` 和 `npm run dev`。Python 的端口不是 `8787` 时，设置 `VECTOR_WEB_PORT`。
+
+要让 Python 直接提供页面，先在 `web/` 执行 `npm run build`，再启动上面同一个 Python 命令。
+
+模式开关与终端相同，写在启动 Python 的参数里，不在页面上。
+
 ### 这一版不做
 
-聊天渠道、Web UI、定时任务、MCP、质量门、Auto Research、命令沙箱和人机确认。
+聊天渠道、定时任务、MCP、质量门、Auto Research、命令沙箱和人机确认。
 
 ### 安装
 
@@ -70,7 +108,7 @@ conda activate env-py3117
 python -m pip install -i https://pypi.tuna.tsinghua.edu.cn/simple --default-timeout=1000000 -e ".[dev]"
 ```
 
-这会以可编辑方式安装 `vector_harness`，并装上测试用的 `pytest` 和 `httpx`。模型调用使用官方 `openai` 包。
+这会以可编辑方式安装 `vector_harness`，并装上测试用的 `pytest` 和 `httpx`。安装指向 `src/vector_harness/`。之后改 `.py` 不用重装，重新运行即可。改了 `pyproject.toml`、增删包目录，或换了 Python 环境，再执行一次上面的命令。模型调用使用官方 `openai` 包。
 
 ### 验证
 
@@ -140,7 +178,7 @@ The terminal and the embeddable provider resolve settings differently:
 
 ### Patterns
 
-Each pattern is its own module, wired explicitly by the caller or the CLI. All are off unless turned on.
+Each pattern is its own module, wired explicitly by the caller or the CLI. All are off unless turned on. How the files divide and how one task runs is in [docs/architecture.md](docs/architecture.md).
 
 | Pattern | Role |
 |---------|------|
@@ -151,9 +189,47 @@ Each pattern is its own module, wired explicitly by the caller or the CLI. All a
 | **Sub-agents** | Delegate one task to a child loop that cannot delegate again |
 | **Long-term memory** | A Markdown file across sessions, appended by a tool |
 
+Plan and reflection wrap the tool loop. Plan alone is plan, then the loop. Reflection alone is reflection, then the loop. With both on, reflection is outside and plan is inside. A failed reflection runs the inner layer once more; when that layer is plan, the revision asks for a new plan.
+
+### Embedding
+
+Outside the terminal, a script uses `VectorHarness`. `llm` only needs `stream(system, messages, tools)`. `run` starts its own event loop, so call it from a normal script, not from a function that is already async.
+
+```python
+from vector_harness import Calculator, OpenAICompatibleProvider, VectorHarness
+
+agent = VectorHarness(
+    name="助手",
+    llm=OpenAICompatibleProvider(),
+    system_prompt="算术必须调用 calculator。",
+    tools=[Calculator()],
+)
+text = agent.run("2 + 3 * 4 等于多少")
+```
+
+The constructor takes the same pattern switches as the CLI, including `skills_dir`, `plan`, and `reflect`. When every switch is off, constructing the agent does not load the pattern package. An existing instance can be extended with `from vector_harness import attach`. `import vector_harness` does not load patterns.
+
+Samples that skip the terminal: `python tests/invoice_sample.py` for an invoice, and `python tests/skills_sample.py` with skills, plan, and reflection together. pytest does not collect either file.
+
+### Local web
+
+From the repository root:
+
+```powershell
+python -m vector_harness.web --workspace .
+```
+
+The page is at `http://127.0.0.1:8787/`.
+
+To develop the page, open another terminal and, in `web/`, run `npm install` and `npm run dev`. If the Python port is not `8787`, set `VECTOR_WEB_PORT`.
+
+To have Python serve the page, run `npm run build` in `web/`, then start the same Python command.
+
+Pattern flags are the same as the terminal. They go on the Python command, not on the page.
+
 ### Out of this version
 
-Chat channels, a web UI, scheduled tasks, MCP, quality gates, auto research, command sandboxing, and human approval prompts.
+Chat channels, scheduled tasks, MCP, quality gates, auto research, command sandboxing, and human approval prompts.
 
 ### Install
 
@@ -164,7 +240,7 @@ conda activate env-py3117
 python -m pip install -i https://pypi.tuna.tsinghua.edu.cn/simple --default-timeout=1000000 -e ".[dev]"
 ```
 
-This installs `vector_harness` in editable mode, plus `pytest` and `httpx` for tests. Model calls use the official `openai` package.
+This installs `vector_harness` in editable mode, plus `pytest` and `httpx` for tests. The install points at `src/vector_harness/`. Later edits to `.py` files are picked up the next time you run a command. Run the install again after changing `pyproject.toml`, adding or removing a package directory, or switching Python environments. Model calls use the official `openai` package.
 
 ### Verify
 
