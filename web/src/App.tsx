@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react"
 import type { FormEvent, KeyboardEvent, MouseEvent } from "react"
 import ReactMarkdown from "react-markdown"
 import remarkGfm from "remark-gfm"
+import { findListableDir, listingIsCurrent, refreshMayReplaceDraft, REFRESH_MS, shouldShowPicker } from "./dirPath.ts"
 import "./App.css"
 
 function Markdown({ text }: { text: string }) {
@@ -353,7 +354,12 @@ export default function App() {
   const cacheRef = useRef(new Map<string, ChatMessage[]>())
   const bottomRef = useRef<HTMLDivElement | null>(null)
   const menuRef = useRef<HTMLDivElement | null>(null)
+  const viewedPathRef = useRef("")
+  const pickerOpenRef = useRef(false)
+  const workdirRef = useRef("")
   messagesRef.current = messages
+  pickerOpenRef.current = pickerOpen
+  workdirRef.current = workdir
 
   const refreshList = useCallback(async (): Promise<SessionList | null> => {
     try {
@@ -403,7 +409,12 @@ export default function App() {
     }
   }, [])
 
-  const loadDirs = useCallback(async (path: string, target: "view" | "picker" = "view") => {
+  const loadDirs = useCallback(async (
+    path: string,
+    target: "view" | "picker" = "view",
+    replaceDraft = true,
+  ): Promise<DirListing | null> => {
+    if (target === "view") viewedPathRef.current = path
     const query = path === "" ? "" : `?path=${encodeURIComponent(path)}`
     try {
       const response = await fetch(`/api/dirs${query}`, { cache: "no-store" })
@@ -411,22 +422,36 @@ export default function App() {
         const code = response.status >= 400 && response.status < 500 ? await readError(response) : "bad_request"
         if (target === "picker") setPickerError(errorLabel(code))
         else setErrorText(code)
-        return
+        return null
       }
       const listing = parseDirs(await response.json())
-      if (!listing) return
+      if (!listing) return null
       if (target === "picker") {
         setPickerError(null)
         setPickerBrowse(listing)
         setPathDraft(listing.path)
-        return
+        return listing
       }
+      if (!listingIsCurrent(path, viewedPathRef.current)) return null
+      viewedPathRef.current = listing.path
       setBrowse(listing)
-      setPathDraft(listing.path)
+      if (replaceDraft && refreshMayReplaceDraft(pickerOpenRef.current)) setPathDraft(listing.path)
+      return listing
     } catch {
       setErrorText("bad_request")
+      return null
     }
   }, [])
+
+  useEffect(() => {
+    const timer = window.setInterval(() => {
+      if (pickerOpenRef.current) return
+      const path = viewedPathRef.current || workdirRef.current
+      if (path === "") return
+      void loadDirs(path, "view", refreshMayReplaceDraft(false))
+    }, REFRESH_MS)
+    return () => window.clearInterval(timer)
+  }, [loadDirs])
 
   useEffect(() => {
     void (async () => {
@@ -573,14 +598,26 @@ export default function App() {
     }
   }
 
+  function refreshListing() {
+    const path = viewedPathRef.current || workdirRef.current
+    if (path === "") return
+    void loadDirs(path, "view", refreshMayReplaceDraft(pickerOpenRef.current))
+  }
+
   async function openPicker() {
     setPickerOpen(true)
     setPickerError(null)
     setSkillOpen(false)
-    await loadDirs(workdir, "picker")
+    setPathDraft(workdir)
+    const found = await findListableDir(workdir, async (path) => (await loadDirs(path, "picker")) !== null)
+    if (!found) {
+      setPickerError("不是文件夹")
+      return
+    }
+    if (found.relocated) setPickerError("原来的工作目录已经不在，请另选一个文件夹。")
   }
 
-  async function useDirectory(path: string) {
+  async function chooseDirectory(path: string) {
     if (runningId !== null || readingStreamRef.current) {
       setErrorText("busy")
       return
@@ -1098,16 +1135,21 @@ export default function App() {
         )}
       </main>
       <aside className="workdir-panel">
-        <button
-          type="button"
-          className="workdir-button"
-          title={workdir}
-          disabled={inputLocked}
-          onClick={() => void openPicker()}
-        >
-          <span className="workdir-kicker">工作目录</span>
-          <span className="workdir-path">{workdir || "选择目录"}</span>
-        </button>
+        <div className="workdir-head">
+          <button
+            type="button"
+            className="workdir-button"
+            title={workdir}
+            disabled={inputLocked}
+            onClick={() => void openPicker()}
+          >
+            <span className="workdir-kicker">工作目录</span>
+            <span className="workdir-path">{workdir || "选择目录"}</span>
+          </button>
+          <button type="button" className="workdir-refresh" onClick={() => refreshListing()}>
+            刷新
+          </button>
+        </div>
         {viewed && browse ? (
           <div className="viewed-path" title={browse.path}>
             {viewed}
@@ -1140,7 +1182,7 @@ export default function App() {
           </ul>
         ) : null}
       </aside>
-      {pickerOpen && pickerBrowse ? (
+      {shouldShowPicker(pickerOpen, pickerBrowse !== null) ? (
         <div className="props-backdrop" onClick={() => setPickerOpen(false)}>
           <div
             className="picker-dialog"
@@ -1165,27 +1207,37 @@ export default function App() {
             </form>
             {pickerError ? <div className="picker-error">{pickerError}</div> : null}
             <ul className="dir-list picker-list" aria-label="可选目录">
-              {pickerBrowse.parent ? (
+              {pickerBrowse?.parent ? (
                 <li className="is-up">
                   <button type="button" onClick={() => pickerBrowse.parent && void loadDirs(pickerBrowse.parent, "picker")}>
                     ..
                   </button>
                 </li>
               ) : null}
-              {pickerBrowse.dirs.map((dir) => (
-                <li key={dir.path} className="is-dir">
-                  <button type="button" onClick={() => void loadDirs(dir.path, "picker")}>
-                    {dir.name}
-                  </button>
-                </li>
-              ))}
-              {pickerBrowse.dirs.length === 0 ? <li className="is-empty">没有子文件夹</li> : null}
+              {pickerBrowse
+                ? pickerBrowse.dirs.map((dir) => (
+                    <li key={dir.path} className="is-dir">
+                      <button type="button" onClick={() => void loadDirs(dir.path, "picker")}>
+                        {dir.name}
+                      </button>
+                    </li>
+                  ))
+                : null}
+              {pickerBrowse && pickerBrowse.dirs.length === 0 ? <li className="is-empty">没有子文件夹</li> : null}
+              {!pickerBrowse ? <li className="is-empty">{pickerError ? "没有可显示的文件夹" : "正在读取"}</li> : null}
             </ul>
             <div className="dir-actions">
               <button type="button" onClick={() => setPickerOpen(false)}>
                 取消
               </button>
-              <button type="button" onClick={() => void useDirectory(pickerBrowse.path)}>
+              <button
+                type="button"
+                disabled={pickerBrowse === null}
+                onClick={() => {
+                  if (pickerBrowse === null) return
+                  void chooseDirectory(pickerBrowse.path)
+                }}
+              >
                 使用此目录
               </button>
             </div>

@@ -36,12 +36,19 @@
   background: #fff;
 }
 
+.workdir-head {
+  display: flex;
+  align-items: stretch;
+  gap: 6px;
+}
+
 .workdir-button {
   display: flex;
+  flex: 1;
   flex-direction: column;
   align-items: flex-start;
   gap: 6px;
-  width: 100%;
+  min-width: 0;
   padding: 8px 10px;
   border: 1px solid #e6e6e6;
   border-radius: 10px;
@@ -59,6 +66,21 @@
 .workdir-button:disabled {
   cursor: not-allowed;
   opacity: 0.6;
+}
+
+.workdir-refresh {
+  flex: none;
+  padding: 0 8px;
+  border: 1px solid #e6e6e6;
+  border-radius: 10px;
+  background: #fafafa;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+
+.workdir-refresh:hover {
+  background: #f3f3f3;
 }
 
 .workdir-kicker {
@@ -660,7 +682,10 @@
 }
 
 .thinking {
+  max-height: 9.6em;
   margin-bottom: 8px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
   color: #9a9a9a;
   font-size: 13px;
   line-height: 1.6;
