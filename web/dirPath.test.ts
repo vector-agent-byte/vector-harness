@@ -50,3 +50,17 @@ test("file and directory context menus stay distinct", async () => {
   assert.deepEqual(entryMenu("file"), ["查看", "重命名", "下载", "删除"])
   assert.deepEqual(entryMenu("dir"), ["重命名", "删除"])
 })
+
+test("python preview colors keywords, strings, and comments", async () => {
+  const { highlightCode } = await import("./src/dirPath.ts")
+  const tokens = highlightCode('import zlib\n# note\nname = "kitten"\n', "verify_png.py")
+  assert.deepEqual(
+    tokens.filter((token) => token.kind !== "plain").map((token) => [token.kind, token.text]),
+    [
+      ["keyword", "import"],
+      ["comment", "# note"],
+      ["string", '"kitten"'],
+    ],
+  )
+  assert.equal(tokens.map((token) => token.text).join(""), 'import zlib\n# note\nname = "kitten"\n')
+})

@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from "react"
-import type { FormEvent, KeyboardEvent, MouseEvent } from "react"
+import type { CSSProperties, FormEvent, KeyboardEvent, MouseEvent, PointerEvent as ReactPointerEvent } from "react"
 import ReactMarkdown from "react-markdown"
 import remarkGfm from "remark-gfm"
-import { entryMenu as entryMenuLabels, findListableDir, listingIsCurrent, refreshMayReplaceDraft, REFRESH_MS, shouldShowPicker } from "./dirPath.ts"
+import { entryMenu as entryMenuLabels, findListableDir, highlightCode, listingIsCurrent, refreshMayReplaceDraft, REFRESH_MS, shouldShowPicker } from "./dirPath.ts"
 import "./App.css"
 
 function Markdown({ text }: { text: string }) {
@@ -325,6 +325,16 @@ function parseDirs(value: unknown): DirListing | null {
   }
 }
 
+function clamp(value: number, min: number, max: number): number {
+  return Math.min(max, Math.max(min, value))
+}
+
+function userPreview(text: string): string {
+  const flat = text.replace(/\s+/g, " ").trim()
+  if (flat.length <= 72) return flat
+  return `${flat.slice(0, 72)}…`
+}
+
 function userMessage(text: string): ChatMessage {
   return {
     role: "user",
@@ -375,6 +385,11 @@ export default function App() {
   const [renameTarget, setRenameTarget] = useState<(NamedPath & { draft: string }) | null>(null)
   const [deleteTarget, setDeleteTarget] = useState<NamedPath | null>(null)
   const [propsId, setPropsId] = useState<string | null>(null)
+  const [userMarks, setUserMarks] = useState<{ index: number; top: number; label: string }[]>([])
+  const [activeUser, setActiveUser] = useState<number | null>(null)
+  const [locatedUser, setLocatedUser] = useState<number | null>(null)
+  const [dialogOffset, setDialogOffset] = useState({ x: 0, y: 0 })
+  const [dialogSize, setDialogSize] = useState<{ width: number; height: number } | null>(null)
 
   const openIdRef = useRef<string | null>(null)
   const readingStreamRef = useRef(false)
@@ -384,6 +399,15 @@ export default function App() {
   const messagesRef = useRef<ChatMessage[]>([])
   const cacheRef = useRef(new Map<string, ChatMessage[]>())
   const bottomRef = useRef<HTMLDivElement | null>(null)
+  const transcriptRef = useRef<HTMLDivElement | null>(null)
+  const locatedTimer = useRef<number | null>(null)
+  const dialogOffsetRef = useRef(dialogOffset)
+  const dialogGesture = useRef<
+    | { kind: "drag"; x: number; y: number; ox: number; oy: number; left: number; top: number }
+    | { kind: "resize"; x: number; y: number; width: number; height: number; left: number; top: number }
+    | null
+  >(null)
+  dialogOffsetRef.current = dialogOffset
   const menuRef = useRef<HTMLDivElement | null>(null)
   const entryMenuRef = useRef<HTMLDivElement | null>(null)
   const viewedPathRef = useRef("")
@@ -576,6 +600,173 @@ export default function App() {
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ block: "end" })
   }, [messages, live, openId])
+
+  const dialogKey = pickerOpen
+    ? "picker"
+    : preview
+      ? "preview"
+      : renameTarget
+        ? "rename"
+        : deleteTarget
+          ? "delete"
+          : propsId
+            ? "props"
+            : ""
+
+  useEffect(() => {
+    setDialogOffset({ x: 0, y: 0 })
+    setDialogSize(null)
+  }, [dialogKey])
+
+  useEffect(() => {
+    function onMove(event: PointerEvent) {
+      const start = dialogGesture.current
+      if (!start) return
+      if (start.kind === "drag") {
+        const left = clamp(start.left + event.clientX - start.x, 8, window.innerWidth - 48)
+        const top = clamp(start.top + event.clientY - start.y, 8, window.innerHeight - 48)
+        const next = { x: start.ox + left - start.left, y: start.oy + top - start.top }
+        dialogOffsetRef.current = next
+        setDialogOffset(next)
+        return
+      }
+      const width = clamp(start.width + event.clientX - start.x, 260, Math.max(260, window.innerWidth - start.left - 8))
+      const height = clamp(start.height + event.clientY - start.y, 140, Math.max(140, window.innerHeight - start.top - 8))
+      const next = {
+        x: start.left - (window.innerWidth - width) / 2,
+        y: start.top - (window.innerHeight - height) / 2,
+      }
+      dialogOffsetRef.current = next
+      setDialogOffset(next)
+      setDialogSize({ width, height })
+    }
+    function onUp() {
+      dialogGesture.current = null
+    }
+    window.addEventListener("pointermove", onMove)
+    window.addEventListener("pointerup", onUp)
+    return () => {
+      window.removeEventListener("pointermove", onMove)
+      window.removeEventListener("pointerup", onUp)
+    }
+  }, [])
+
+  function beginDialogDrag(event: ReactPointerEvent<HTMLElement>) {
+    if (event.button !== 0) return
+    const dialog = event.currentTarget.closest(".picker-dialog, .props-card")
+    if (!(dialog instanceof HTMLElement)) return
+    const rect = dialog.getBoundingClientRect()
+    const offset = dialogOffsetRef.current
+    dialogGesture.current = {
+      kind: "drag",
+      x: event.clientX,
+      y: event.clientY,
+      ox: offset.x,
+      oy: offset.y,
+      left: rect.left,
+      top: rect.top,
+    }
+    event.currentTarget.setPointerCapture(event.pointerId)
+  }
+
+  function beginDialogResize(event: ReactPointerEvent<HTMLElement>) {
+    if (event.button !== 0) return
+    event.stopPropagation()
+    event.preventDefault()
+    const dialog = event.currentTarget.closest(".picker-dialog, .props-card")
+    if (!(dialog instanceof HTMLElement)) return
+    const rect = dialog.getBoundingClientRect()
+    dialogGesture.current = {
+      kind: "resize",
+      x: event.clientX,
+      y: event.clientY,
+      width: rect.width,
+      height: rect.height,
+      left: rect.left,
+      top: rect.top,
+    }
+    event.currentTarget.setPointerCapture(event.pointerId)
+  }
+
+  function dialogFrame(className: string): { className: string; style: CSSProperties } {
+    const style: CSSProperties = { transform: `translate(${dialogOffset.x}px, ${dialogOffset.y}px)` }
+    if (dialogSize) {
+      style.width = dialogSize.width
+      style.height = dialogSize.height
+    }
+    return { className: dialogSize ? `${className} is-sized` : className, style }
+  }
+
+  useEffect(() => {
+    const root = transcriptRef.current
+    if (!root) return
+    let frame = 0
+    const measure = () => {
+      const nodes = [...root.querySelectorAll<HTMLElement>("[data-user-message]")]
+      const height = root.scrollHeight
+      const rootTop = root.getBoundingClientRect().top
+      const next = nodes.map((node) => {
+        const topPx = node.getBoundingClientRect().top - rootTop + root.scrollTop
+        const raw = height <= 0 ? 0 : (topPx / height) * 100
+        return {
+          index: Number(node.dataset.userMessage),
+          top: Math.min(98, Math.max(1, raw)),
+          label: node.dataset.label ?? "",
+        }
+      })
+      setUserMarks((current) => {
+        if (
+          current.length === next.length &&
+          current.every(
+            (item, index) =>
+              item.index === next[index].index &&
+              item.label === next[index].label &&
+              Math.abs(item.top - next[index].top) < 0.25,
+          )
+        ) {
+          return current
+        }
+        return next
+      })
+      const line = root.scrollTop + 24
+      let active: number | null = null
+      for (const node of nodes) {
+        const topPx = node.getBoundingClientRect().top - rootTop + root.scrollTop
+        if (topPx <= line) active = Number(node.dataset.userMessage)
+      }
+      setActiveUser((current) => (current === active ? current : active))
+    }
+    const schedule = () => {
+      window.cancelAnimationFrame(frame)
+      frame = window.requestAnimationFrame(measure)
+    }
+    schedule()
+    const observer = new ResizeObserver(schedule)
+    observer.observe(root)
+    const column = root.querySelector(".column")
+    if (column) observer.observe(column)
+    root.addEventListener("scroll", schedule, { passive: true })
+    return () => {
+      window.cancelAnimationFrame(frame)
+      observer.disconnect()
+      root.removeEventListener("scroll", schedule)
+    }
+  }, [messages, live, openId])
+
+  function jumpToUser(index: number) {
+    const root = transcriptRef.current
+    const node = root?.querySelector<HTMLElement>(`[data-user-message="${index}"]`)
+    if (!root || !node) return
+    const top = node.getBoundingClientRect().top - root.getBoundingClientRect().top + root.scrollTop
+    const next = top - root.clientHeight / 2 + node.offsetHeight / 2
+    root.scrollTo({ top: Math.max(0, next), behavior: "smooth" })
+    setLocatedUser(index)
+    if (locatedTimer.current !== null) window.clearTimeout(locatedTimer.current)
+    locatedTimer.current = window.setTimeout(() => {
+      setLocatedUser((current) => (current === index ? null : current))
+      locatedTimer.current = null
+    }, 1400)
+  }
 
   useEffect(() => {
     if (readingStream || runningId === null) return
@@ -1133,7 +1324,8 @@ export default function App() {
           <div className="empty">先新建</div>
         ) : (
           <>
-            <div className="transcript">
+            <div className="transcript-wrap">
+            <div className="transcript" ref={transcriptRef}>
               <div className="column">
                 {openId ? (
                   messages.map((message, index) => {
@@ -1141,10 +1333,13 @@ export default function App() {
                       .reverse()
                       .find((item) => item.role === "user" && item.created_at !== null)?.created_at ?? null
                     const timeLabel = messageTimeLabel(message, sentAt)
+                    const isUser = message.role === "user"
                     return (
                       <article
                         key={`${index}-${message.role}`}
-                        className={`message-row ${message.role}${message.is_error ? " is-error" : ""}`}
+                        className={`message-row ${message.role}${message.is_error ? " is-error" : ""}${locatedUser === index ? " is-located" : ""}`}
+                        data-user-message={isUser ? index : undefined}
+                        data-label={isUser ? userPreview(message.content) : undefined}
                       >
                         <div className="message-stack">
                           <div className="bubble">
@@ -1192,6 +1387,23 @@ export default function App() {
                 ) : null}
                 <div ref={bottomRef} />
               </div>
+            </div>
+            {userMarks.length > 0 ? (
+              <div className="user-rail" aria-label="用户输入">
+                {userMarks.map((mark) => (
+                  <button
+                    key={mark.index}
+                    type="button"
+                    className={mark.index === activeUser ? "user-mark is-active" : "user-mark"}
+                    style={{ top: `${mark.top}%` }}
+                    data-label={mark.label}
+                    title={mark.label}
+                    aria-label={mark.label === "" ? "用户输入" : mark.label}
+                    onClick={() => jumpToUser(mark.index)}
+                  />
+                ))}
+              </div>
+            ) : null}
             </div>
             {visibleStatus ? (
               <div className="status-wrap">
@@ -1291,7 +1503,18 @@ export default function App() {
         )}
       </main>
       <aside className="workdir-panel">
-        <div className="workdir-head">
+        <div className="workdir-card">
+          <div className="workdir-head">
+            <span className="workdir-kicker">工作目录</span>
+            <button type="button" className="workdir-refresh" aria-label="刷新" title="刷新" onClick={() => refreshListing()}>
+              <svg viewBox="0 0 16 16" aria-hidden="true">
+                <path d="M2.6 8a5.4 5.4 0 0 1 9.1-4" />
+                <path d="M11.7 2.4v3.1H8.6" />
+                <path d="M13.4 8a5.4 5.4 0 0 1-9.1 4" />
+                <path d="M4.3 13.6V10.5H7.4" />
+              </svg>
+            </button>
+          </div>
           <button
             type="button"
             className="workdir-button"
@@ -1299,11 +1522,7 @@ export default function App() {
             disabled={inputLocked}
             onClick={() => void openPicker()}
           >
-            <span className="workdir-kicker">工作目录</span>
             <span className="workdir-path">{workdir || "选择目录"}</span>
-          </button>
-          <button type="button" className="workdir-refresh" onClick={() => refreshListing()}>
-            刷新
           </button>
         </div>
         {viewed && browse ? (
@@ -1351,12 +1570,12 @@ export default function App() {
       {shouldShowPicker(pickerOpen, pickerBrowse !== null) ? (
         <div className="props-backdrop" onClick={() => setPickerOpen(false)}>
           <div
-            className="picker-dialog"
+            {...dialogFrame("picker-dialog")}
             role="dialog"
             aria-label="选择工作目录"
             onClick={(event) => event.stopPropagation()}
           >
-            <div className="props-heading">选择工作目录</div>
+            <div className="props-heading" onPointerDown={beginDialogDrag}>选择工作目录</div>
             <form
               className="dir-jump"
               onSubmit={(event) => {
@@ -1407,6 +1626,7 @@ export default function App() {
                 使用此目录
               </button>
             </div>
+            <div className="dialog-resize" onPointerDown={beginDialogResize} />
           </div>
         </div>
       ) : null}
@@ -1427,13 +1647,25 @@ export default function App() {
       {preview ? (
         <div className="props-backdrop" onClick={() => setPreview(null)}>
           <div
-            className="picker-dialog file-preview"
+            {...dialogFrame("picker-dialog file-preview")}
             role="dialog"
             aria-label="查看文件"
             onClick={(event) => event.stopPropagation()}
           >
-            <div className="props-heading">{preview.name}</div>
-            {preview.kind === "text" ? <pre className="preview-text">{preview.text}</pre> : null}
+            <div className="props-heading" onPointerDown={beginDialogDrag}>{preview.name}</div>
+            {preview.kind === "text" ? (
+              <pre className="preview-text">
+                {highlightCode(preview.text, preview.name).map((token, index) =>
+                  token.kind === "plain" ? (
+                    token.text
+                  ) : (
+                    <span key={index} className={`tok-${token.kind}`}>
+                      {token.text}
+                    </span>
+                  ),
+                )}
+              </pre>
+            ) : null}
             {preview.kind === "image" ? (
               <img
                 className="preview-image"
@@ -1451,13 +1683,14 @@ export default function App() {
                 下载
               </button>
             </div>
+            <div className="dialog-resize" onPointerDown={beginDialogResize} />
           </div>
         </div>
       ) : null}
       {renameTarget ? (
         <div className="props-backdrop" onClick={() => setRenameTarget(null)}>
           <form
-            className="picker-dialog"
+            {...dialogFrame("picker-dialog")}
             aria-label="重命名"
             onClick={(event) => event.stopPropagation()}
             onSubmit={(event) => {
@@ -1465,7 +1698,7 @@ export default function App() {
               void submitRename()
             }}
           >
-            <div className="props-heading">重命名</div>
+            <div className="props-heading" onPointerDown={beginDialogDrag}>重命名</div>
             <input
               className="rename-input"
               aria-label="新名称"
@@ -1480,18 +1713,19 @@ export default function App() {
               </button>
               <button type="submit">确定</button>
             </div>
+            <div className="dialog-resize" onPointerDown={beginDialogResize} />
           </form>
         </div>
       ) : null}
       {deleteTarget ? (
         <div className="props-backdrop" onClick={() => setDeleteTarget(null)}>
           <div
-            className="picker-dialog"
+            {...dialogFrame("picker-dialog")}
             role="dialog"
             aria-label="删除"
             onClick={(event) => event.stopPropagation()}
           >
-            <div className="props-heading">删除 {deleteTarget.name}？</div>
+            <div className="props-heading" onPointerDown={beginDialogDrag}>删除 {deleteTarget.name}？</div>
             <div className="dir-actions">
               <button type="button" onClick={() => setDeleteTarget(null)}>
                 取消
@@ -1500,6 +1734,7 @@ export default function App() {
                 删除
               </button>
             </div>
+            <div className="dialog-resize" onPointerDown={beginDialogResize} />
           </div>
         </div>
       ) : null}
@@ -1539,12 +1774,12 @@ export default function App() {
           }}
         >
           <div
-            className="props-card"
+            {...dialogFrame("props-card")}
             role="dialog"
             aria-label="会话属性"
             onClick={(event) => event.stopPropagation()}
           >
-            <div className="props-heading">属性</div>
+            <div className="props-heading" onPointerDown={beginDialogDrag}>属性</div>
             <dl>
               <dt>标题</dt>
               <dd>{propsSession.title}</dd>
@@ -1558,6 +1793,7 @@ export default function App() {
             <button type="button" className="props-close" onClick={() => setPropsId(null)}>
               关闭
             </button>
+            <div className="dialog-resize" onPointerDown={beginDialogResize} />
           </div>
         </div>
       ) : null}
