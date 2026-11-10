@@ -1,6 +1,17 @@
 import { useCallback, useEffect, useRef, useState } from "react"
 import type { FormEvent, KeyboardEvent } from "react"
+import ReactMarkdown from "react-markdown"
+import remarkGfm from "remark-gfm"
 import "./App.css"
+
+function Markdown({ text }: { text: string }) {
+  if (text === "") return null
+  return (
+    <div className="md">
+      <ReactMarkdown remarkPlugins={[remarkGfm]}>{text}</ReactMarkdown>
+    </div>
+  )
+}
 
 type SessionItem = {
   id: string
@@ -30,6 +41,7 @@ type LiveTurn = {
 type SessionList = {
   sessions: SessionItem[]
   running_id: string | null
+  model: string
 }
 
 type StreamEvent = {
@@ -45,6 +57,15 @@ type RunNote = {
 }
 
 const POLL_MS = 1000
+const OPEN_SESSION_KEY = "vector-open-session"
+
+const MODES = [
+  { id: "react", label: "ReAct" },
+  { id: "plan", label: "PlanAndSolve" },
+  { id: "reflect", label: "Reflection" },
+] as const
+
+type ModeId = (typeof MODES)[number]["id"]
 
 function parseSessionList(value: unknown): SessionList | null {
   if (!value || typeof value !== "object") return null
@@ -63,7 +84,11 @@ function parseSessionList(value: unknown): SessionList | null {
     })
   }
   const runningId = record.running_id
-  return { sessions, running_id: typeof runningId === "string" ? runningId : null }
+  return {
+    sessions,
+    running_id: typeof runningId === "string" ? runningId : null,
+    model: typeof record.model === "string" ? record.model : "",
+  }
 }
 
 function normalizeTools(value: unknown): ToolCall[] | null {
@@ -183,6 +208,8 @@ export default function App() {
   const [runNote, setRunNote] = useState<RunNote | null>(null)
   const [errorText, setErrorText] = useState<string | null>(null)
   const [listReady, setListReady] = useState(false)
+  const [mode, setMode] = useState<ModeId>("react")
+  const [modelName, setModelName] = useState("")
 
   const openIdRef = useRef<string | null>(null)
   const readingStreamRef = useRef(false)
@@ -207,6 +234,7 @@ export default function App() {
       if (!data) return null
       setSessions(data.sessions)
       setRunningId(data.running_id)
+      setModelName(data.model)
       return data
     } catch {
       return null
@@ -232,8 +260,21 @@ export default function App() {
   }, [refreshList])
 
   useEffect(() => {
-    void refreshList()
-  }, [refreshList])
+    void (async () => {
+      const data = await refreshList()
+      const saved = sessionStorage.getItem(OPEN_SESSION_KEY)
+      if (!data || !saved || !data.sessions.some((item) => item.id === saved)) return
+      rememberOpen(saved)
+      const loaded = await fetchSessionMessages(saved)
+      if (!loaded || openIdRef.current !== saved) return
+      cacheRef.current.set(saved, loaded)
+      setMessages(loaded)
+    })()
+  }, [refreshList, fetchSessionMessages])
+
+  useEffect(() => {
+    if (openId) sessionStorage.setItem(OPEN_SESSION_KEY, openId)
+  }, [openId])
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ block: "end" })
@@ -372,6 +413,16 @@ export default function App() {
     }
   }
 
+  async function stopRun() {
+    const sessionId = runningId ?? openId
+    if (!sessionId) return
+    try {
+      await fetch(`/api/sessions/${encodeURIComponent(sessionId)}/stop`, { method: "POST" })
+    } catch {
+      setErrorText("bad_request")
+    }
+  }
+
   async function send() {
     const text = draft
     if (text.trim() === "") return
@@ -399,7 +450,7 @@ export default function App() {
         response = await fetch(`/api/sessions/${encodeURIComponent(sessionId)}/messages`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ text }),
+          body: JSON.stringify({ text, mode }),
         })
       } catch {
         await rollbackSend(sessionId, text)
@@ -492,12 +543,14 @@ export default function App() {
   return (
     <div className="app">
       <aside className="sidebar">
-        <div className="sidebar-head">
-          <h1>会话</h1>
-          <button type="button" onClick={() => void createSession()}>
-            新会话
-          </button>
-        </div>
+        <div className="brand">Vector Harness</div>
+        <button type="button" className="new-session" onClick={() => void createSession()}>
+          <span className="plus" aria-hidden="true">
+            +
+          </span>
+          新会话
+        </button>
+        <div className="side-label">会话</div>
         <ul className="session-list">
           {sessions.map((session) => {
             const open = session.id === openId
@@ -526,15 +579,23 @@ export default function App() {
         </ul>
       </aside>
       <main className="main">
+        <header className="topbar">
+          <h1 className="current-title">{openSession ? openSession.title : "会话"}</h1>
+          {modelName ? (
+            <div className="model-name" title={modelName}>
+              {modelName}
+            </div>
+          ) : null}
+        </header>
         {errorText ? <div className="error-banner">{errorText}</div> : null}
         {listReady && sessions.length === 0 ? (
           <div className="empty">先新建</div>
         ) : (
           <>
-            {openSession ? <h2 className="current-title">{openSession.title}</h2> : null}
             <div className="transcript">
-              {openId
-                ? messages.map((message, index) => (
+              <div className="column">
+                {openId ? (
+                  messages.map((message, index) => (
                     <article
                       key={`${index}-${message.role}`}
                       className={`message-row ${message.role}${message.is_error ? " is-error" : ""}`}
@@ -543,7 +604,11 @@ export default function App() {
                         {message.role === "tool" && message.is_error ? (
                           <div className="fail">失败</div>
                         ) : null}
-                        {message.content}
+                        {message.role === "tool" ? (
+                          <pre className="tool-output">{message.content}</pre>
+                        ) : (
+                          <Markdown text={message.content} />
+                        )}
                         {message.tool_calls?.map((call, callIndex) => (
                           <div key={`${call.id}-${callIndex}`} className="tool-name">
                             {call.name}
@@ -552,34 +617,78 @@ export default function App() {
                       </div>
                     </article>
                   ))
-                : null}
-              {showLive && live ? (
-                <article className="message-row assistant">
-                  <div className="bubble">
-                    {live.thinking ? <div className="thinking">{live.thinking}</div> : null}
-                    {live.text}
-                    {live.tools.map((name, index) => (
-                      <div key={`${name}-${index}`} className="tool-name">
-                        {name}
-                      </div>
-                    ))}
-                  </div>
-                </article>
-              ) : null}
-              <div ref={bottomRef} />
+                ) : (
+                  <div className="pick">从左侧打开一个会话</div>
+                )}
+                {showLive && live ? (
+                  <article className="message-row assistant">
+                    <div className="bubble">
+                      {live.thinking ? (
+                        <div className="thinking">
+                          <Markdown text={live.thinking} />
+                        </div>
+                      ) : null}
+                      <Markdown text={live.text} />
+                      {live.tools.map((name, index) => (
+                        <div key={`${name}-${index}`} className="tool-name">
+                          {name}
+                        </div>
+                      ))}
+                    </div>
+                  </article>
+                ) : null}
+                <div ref={bottomRef} />
+              </div>
             </div>
-            {visibleStatus ? <div className="status-banner">{visibleStatus}</div> : null}
+            {visibleStatus ? (
+              <div className="status-wrap">
+                <div className="status-banner">{visibleStatus === "stopped" ? "已停止" : visibleStatus}</div>
+              </div>
+            ) : null}
             {openId ? (
               <form className="composer" onSubmit={onSubmit}>
-                <textarea
-                  value={draft}
-                  disabled={inputLocked}
-                  onChange={(event) => setDraft(event.target.value)}
-                  onKeyDown={onDraftKeyDown}
-                />
-                <button type="submit" disabled={inputLocked || draft.trim() === ""}>
-                  发送
-                </button>
+                <div className="composer-row">
+                  <textarea
+                    value={draft}
+                    placeholder="输入消息，回车发送"
+                    disabled={inputLocked}
+                    onChange={(event) => setDraft(event.target.value)}
+                    onKeyDown={onDraftKeyDown}
+                  />
+                  {inputLocked ? (
+                    <button type="button" className="send is-stop" aria-label="停止" onClick={() => void stopRun()}>
+                      <svg viewBox="0 0 16 16" aria-hidden="true">
+                        <rect x="4.5" y="4.5" width="7" height="7" rx="1" />
+                      </svg>
+                    </button>
+                  ) : (
+                    <button
+                      type="submit"
+                      className="send"
+                      aria-label="发送"
+                      disabled={draft.trim() === ""}
+                    >
+                      <svg viewBox="0 0 16 16" aria-hidden="true">
+                        <path d="M8 12.5V3.5M8 3.5L4 7.5M8 3.5L12 7.5" />
+                      </svg>
+                    </button>
+                  )}
+                </div>
+                <div className="modes" role="radiogroup" aria-label="模式">
+                  {MODES.map((item) => (
+                    <button
+                      key={item.id}
+                      type="button"
+                      className={item.id === mode ? "mode is-selected" : "mode"}
+                      role="radio"
+                      aria-checked={item.id === mode}
+                      disabled={inputLocked}
+                      onClick={() => setMode(item.id)}
+                    >
+                      {item.label}
+                    </button>
+                  ))}
+                </div>
               </form>
             ) : null}
           </>

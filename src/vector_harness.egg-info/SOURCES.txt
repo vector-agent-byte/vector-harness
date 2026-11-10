@@ -5,6 +5,9 @@ src/vector_harness/assembly.py
 src/vector_harness/cli.py
 src/vector_harness/cli_render.py
 src/vector_harness/types.py
+src/vector_harness/web.py
+src/vector_harness/web_server.py
+src/vector_harness/web_sessions.py
 src/vector_harness.egg-info/PKG-INFO
 src/vector_harness.egg-info/SOURCES.txt
 src/vector_harness.egg-info/dependency_links.txt
@@ -49,3 +52,6 @@ tests/test_session.py
 tests/test_shell.py
 tests/test_skills.py
 tests/test_subagent.py
+tests/test_web_main.py
+tests/test_web_server.py
+tests/test_web_sessions.py

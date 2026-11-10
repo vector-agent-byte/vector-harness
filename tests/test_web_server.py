@@ -40,7 +40,7 @@ def test_lists_creates_and_reads_a_session(tmp_path: Path):
         with httpx.Client(trust_env=False) as client:
             empty = client.get(f"{base}/api/sessions")
             assert empty.status_code == 200
-            assert empty.json() == {"sessions": [], "running_id": None}
+            assert empty.json() == {"sessions": [], "running_id": None, "model": ""}
             assert "access-control-allow-origin" not in {k.lower() for k in empty.headers}
             created = client.post(f"{base}/api/sessions")
             assert created.status_code == 201
@@ -56,6 +56,21 @@ def test_lists_creates_and_reads_a_session(tmp_path: Path):
             body = client.get(f"{base}/api/sessions/{session_id}")
             assert body.json() == {"id": session_id, "messages": []}
             assert client.get(f"{base}/api/unknown").status_code == 404
+    finally:
+        server.shutdown()
+
+
+def test_session_list_reports_the_provider_model(tmp_path: Path):
+    class Named:
+        model = "demo-model"
+
+    server = WebServer(WebSettings(workspace=tmp_path), provider=Named())
+    server.start()
+    try:
+        with httpx.Client(trust_env=False) as client:
+            listed = client.get(f"http://127.0.0.1:{server.port}/api/sessions")
+            assert listed.status_code == 200
+            assert listed.json()["model"] == "demo-model"
     finally:
         server.shutdown()
 
@@ -192,6 +207,147 @@ def test_plan_flag_uses_the_plan_system_before_the_answer(tmp_path: Path):
         assert provider.calls[0]["system"] == 'Reply with JSON only, of the form {"steps": ["..."]}.'
         stored = (tmp_path / ".vector" / "sessions" / f"{session_id}.jsonl").read_text(encoding="utf-8")
         assert "做完了" in stored
+    finally:
+        server.shutdown()
+
+
+def test_page_mode_overrides_the_startup_flags(tmp_path: Path):
+    session_id = create_session(tmp_path)
+    provider = ScriptedProvider(
+        turns=[
+            ScriptedTurn(content='{"steps": ["look"]}'),
+            ScriptedTurn(content="做完了"),
+        ]
+    )
+    server = WebServer(WebSettings(workspace=tmp_path, reflect=True), provider)
+    server.start()
+    try:
+        with httpx.Client(trust_env=False, timeout=None) as client:
+            response = client.post(
+                f"http://127.0.0.1:{server.port}/api/sessions/{session_id}/messages",
+                json={"text": "去做", "mode": "plan"},
+            )
+        assert response.status_code == 200
+        assert provider.calls[0]["system"] == 'Reply with JSON only, of the form {"steps": ["..."]}.'
+    finally:
+        server.shutdown()
+
+
+def test_react_mode_skips_plan_even_when_the_server_started_with_it(tmp_path: Path):
+    session_id = create_session(tmp_path)
+    provider = ScriptedProvider(turns=[ScriptedTurn(content="直接答")])
+    server = WebServer(WebSettings(workspace=tmp_path, plan=True), provider)
+    server.start()
+    try:
+        with httpx.Client(trust_env=False, timeout=None) as client:
+            response = client.post(
+                f"http://127.0.0.1:{server.port}/api/sessions/{session_id}/messages",
+                json={"text": "你好", "mode": "react"},
+            )
+        assert response.status_code == 200
+        assert provider.calls[0]["system"] == DEFAULT_SYSTEM
+    finally:
+        server.shutdown()
+
+
+def test_reflect_mode_asks_for_a_critique_after_the_answer(tmp_path: Path):
+    session_id = create_session(tmp_path)
+    provider = ScriptedProvider(
+        turns=[
+            ScriptedTurn(content="初稿"),
+            ScriptedTurn(content='{"ok": true}'),
+        ]
+    )
+    server = WebServer(WebSettings(workspace=tmp_path), provider)
+    server.start()
+    try:
+        with httpx.Client(trust_env=False, timeout=None) as client:
+            response = client.post(
+                f"http://127.0.0.1:{server.port}/api/sessions/{session_id}/messages",
+                json={"text": "写一下", "mode": "reflect"},
+            )
+        assert response.status_code == 200
+        assert provider.calls[0]["system"] == DEFAULT_SYSTEM
+        assert provider.calls[1]["system"].startswith("Reply with JSON only")
+    finally:
+        server.shutdown()
+
+
+def test_stop_ends_the_turn_and_keeps_the_partial_reply(tmp_path: Path):
+    session_id = create_session(tmp_path)
+    wrote = threading.Event()
+
+    class HangAfterADelta:
+        async def stream(self, *, system: str, messages: list, tools: list):
+            yield ProviderEvent(kind="text_delta", text="写到一半")
+            wrote.set()
+            await asyncio.Event().wait()
+
+    server = WebServer(WebSettings(workspace=tmp_path), HangAfterADelta())
+    server.start()
+    holder: dict = {}
+
+    def post() -> None:
+        with httpx.Client(trust_env=False, timeout=None) as client:
+            holder["response"] = client.post(
+                f"http://127.0.0.1:{server.port}/api/sessions/{session_id}/messages",
+                json={"text": "开始", "mode": "react"},
+            )
+
+    worker = threading.Thread(target=post)
+    worker.start()
+    try:
+        with httpx.Client(trust_env=False, timeout=5) as client:
+            base = f"http://127.0.0.1:{server.port}"
+            assert wrote.wait(5)
+            stopped = client.post(f"{base}/api/sessions/{session_id}/stop")
+            assert stopped.json() == {"stopped": True}
+        worker.join(5)
+        assert not worker.is_alive()
+        assert '"status": "stopped"' in holder["response"].text
+        stored = (tmp_path / ".vector" / "sessions" / f"{session_id}.jsonl").read_text(
+            encoding="utf-8"
+        )
+        assert "写到一半" in stored
+        with httpx.Client(trust_env=False, timeout=5) as client:
+            listed = client.get(f"http://127.0.0.1:{server.port}/api/sessions")
+        assert listed.json()["running_id"] is None
+    finally:
+        if worker.is_alive():
+            server.request_stop(session_id)
+            worker.join(2)
+        server.shutdown()
+
+
+def test_stop_when_idle_reports_false(tmp_path: Path):
+    session_id = create_session(tmp_path)
+    server = WebServer(WebSettings(workspace=tmp_path), provider=object())
+    server.start()
+    try:
+        with httpx.Client(trust_env=False) as client:
+            response = client.post(
+                f"http://127.0.0.1:{server.port}/api/sessions/{session_id}/stop"
+            )
+        assert response.status_code == 200
+        assert response.json() == {"stopped": False}
+    finally:
+        server.shutdown()
+
+
+def test_unknown_mode_is_a_bad_request(tmp_path: Path):
+    session_id = create_session(tmp_path)
+    server = WebServer(WebSettings(workspace=tmp_path), provider=object())
+    server.start()
+    try:
+        with httpx.Client(trust_env=False) as client:
+            response = client.post(
+                f"http://127.0.0.1:{server.port}/api/sessions/{session_id}/messages",
+                json={"text": "你好", "mode": "other"},
+            )
+        assert response.status_code == 400
+        assert response.json() == {"error": "bad_request"}
+        stored = tmp_path / ".vector" / "sessions" / f"{session_id}.jsonl"
+        assert stored.read_text(encoding="utf-8") == ""
     finally:
         server.shutdown()
 

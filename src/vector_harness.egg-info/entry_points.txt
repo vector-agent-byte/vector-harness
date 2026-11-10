@@ -1,2 +1,3 @@
 [console_scripts]
 vector-harness = vector_harness.cli:main
+vector-harness-web = vector_harness.web:main

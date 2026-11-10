@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import threading
 import time
 from pathlib import Path
 
@@ -28,6 +29,21 @@ def test_shell_runs_in_workspace_root(tmp_path: Path):
     )
     assert "exit_code=0" in result
     assert str(root.resolve()) in result
+
+
+def test_shell_stop_ends_a_long_command(tmp_path: Path):
+    tool = Shell(tmp_path)
+    tool.cancel = threading.Event()
+
+    def trip() -> None:
+        time.sleep(0.3)
+        tool.cancel.set()
+
+    threading.Thread(target=trip, daemon=True).start()
+    started = time.monotonic()
+    result = run(tool.execute({"command": 'python -c "import time; time.sleep(30)"'}))
+    assert time.monotonic() - started < 5
+    assert result == "Error: stopped"
 
 
 def test_shell_times_out_within_five_seconds(tmp_path: Path):

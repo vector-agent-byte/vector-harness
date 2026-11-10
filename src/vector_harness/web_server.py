@@ -16,7 +16,8 @@ from urllib.parse import unquote, urlsplit
 
 from vector_harness.cli import build_agent
 from vector_harness.core.session import Session
-from vector_harness.types import ProviderEvent
+from vector_harness.tools.shell import Shell, signal_kill
+from vector_harness.types import Message, ProviderEvent, Role
 from vector_harness.web_sessions import (
     create_session,
     is_session_id,
@@ -27,6 +28,12 @@ from vector_harness.web_sessions import (
 _NO_DIST = "页面还没有构建。请先在 web/ 执行 npm run build。\n"
 _JSON = "application/json; charset=utf-8"
 _EVENT_STREAM = "text/event-stream"
+# 页面上的三种模式。缺省时沿用启动服务时的 --plan / --reflect。
+_MODES = {
+    "react": (False, False),
+    "plan": (True, False),
+    "reflect": (False, True),
+}
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -50,8 +57,28 @@ class WebServer:
         self.running_id: str | None = None
         # 盖住「检查正忙」到这一轮结束。拿不到锁就是已经有一轮。
         self._lock = threading.Lock()
+        self._cancel = threading.Event()
+        self._processes: list = []
+        self._process_lock = threading.Lock()
+        self._run_loop: asyncio.AbstractEventLoop | None = None
+        self._run_task: asyncio.Task | None = None
         self._httpd: _BoundServer | None = None
         self._thread: threading.Thread | None = None
+
+    def request_stop(self, session_id: str) -> bool:
+        """停下正在跑的那一轮。不是这一份会话时返回 False。"""
+        if self.running_id != session_id:
+            return False
+        self._cancel.set()
+        with self._process_lock:
+            procs = list(self._processes)
+        for proc in procs:
+            signal_kill(proc)
+        loop = self._run_loop
+        task = self._run_task
+        if loop is not None and task is not None and not task.done():
+            loop.call_soon_threadsafe(task.cancel)
+        return True
 
     def start(self, host: str = "127.0.0.1", port: int = 0) -> None:
         """绑定完成后在守护线程里服务。返回时 ``port`` 已是实际端口。"""
@@ -110,6 +137,12 @@ class _Handler(BaseHTTPRequestHandler):
         return
 
 
+def _provider_model(provider: object) -> str:
+    """页面展示当前模型名。测试里的假提供方可以没有这个属性。"""
+    model = getattr(provider, "model", "")
+    return model if isinstance(model, str) else ""
+
+
 def _route(handler: BaseHTTPRequestHandler, method: str) -> None:
     server = handler.server
     assert isinstance(server, _BoundServer)
@@ -135,7 +168,11 @@ def _route_api(
         _send_json(
             handler,
             200,
-            {"sessions": list_sessions(workspace), "running_id": app.running_id},
+            {
+                "sessions": list_sessions(workspace),
+                "running_id": app.running_id,
+                "model": _provider_model(app.provider),
+            },
         )
         return
     if method == "POST" and segments == ["api", "sessions"]:
@@ -152,6 +189,14 @@ def _route_api(
     ):
         _send_message(app, handler, segments[2])
         return
+    if (
+        method == "POST"
+        and len(segments) == 4
+        and segments[:2] == ["api", "sessions"]
+        and segments[3] == "stop"
+    ):
+        _stop_run(app, handler, segments[2])
+        return
     _send_json(handler, 404, {"error": "not_found"})
 
 
@@ -165,20 +210,26 @@ def _send_message(app: WebServer, handler: BaseHTTPRequestHandler, session_id: s
     if not session_path.is_file():
         _send_json(handler, 404, {"error": "not_found"})
         return
-    text = _message_text(raw)
-    if text is None:
+    request = _message_request(raw)
+    if request is None:
         _send_json(handler, 400, {"error": "bad_request"})
         return
+    text, mode = request
     if text.strip() == "":
         _send_json(handler, 400, {"error": "empty"})
         return
+    if mode is None:
+        plan, reflect = app.settings.plan, app.settings.reflect
+    else:
+        plan, reflect = _MODES[mode]
     # 锁在启动运行之前就占住，一直留到 run 返回。第二次发送拿不到锁。
     if not app._lock.acquire(blocking=False):
         _send_json(handler, 409, {"error": "busy"})
         return
+    app._cancel.clear()
     app.running_id = session_id
     try:
-        _stream_turn(app, handler, session_path, text)
+        _stream_turn(app, handler, session_path, text, plan=plan, reflect=reflect)
     finally:
         app.running_id = None
         app._lock.release()
@@ -189,6 +240,9 @@ def _stream_turn(
     handler: BaseHTTPRequestHandler,
     session_path: Path,
     text: str,
+    *,
+    plan: bool,
+    reflect: bool,
 ) -> None:
     """新建一轮 runner，把模型事件和最后的 run_result 逐条写出去。"""
     settings = app.settings
@@ -199,30 +253,77 @@ def _stream_turn(
         skills_dir=settings.skills_dir,
         memory_path=settings.memory_path,
         compact=settings.compact,
-        plan=settings.plan,
-        reflect=settings.reflect,
+        plan=plan,
+        reflect=reflect,
         subagents=settings.subagents,
         max_steps=settings.max_steps,
     )
 
+    fragment: list[str] = []
+
     def on_event(event: ProviderEvent) -> None:
+        if event.kind == "tool_call_end":
+            fragment.clear()
+        elif event.kind == "text_delta" and event.origin != "child" and event.text:
+            fragment.append(event.text)
         _write_event(handler, _event_payload(event))
+
+    for tool in agent.loop.tools:
+        if isinstance(tool, Shell):
+            tool.cancel = app._cancel
+            tool.processes = app._processes
+            tool.process_lock = app._process_lock
 
     agent.loop.on_event = on_event
     _begin_event_stream(handler)
-    result = asyncio.run(agent.run(text))
+
+    async def drive():
+        app._run_loop = asyncio.get_running_loop()
+        app._run_task = asyncio.current_task()
+        try:
+            if app._cancel.is_set():
+                _keep_partial(session_path, "".join(fragment))
+                return None
+            return await agent.run(text)
+        except asyncio.CancelledError:
+            _keep_partial(session_path, "".join(fragment))
+            return None
+        finally:
+            app._run_task = None
+            app._run_loop = None
+
+    result = asyncio.run(drive())
     _write_event(
         handler,
         {
             "kind": "run_result",
-            "status": result.status,
-            "text": result.text,
+            "status": "stopped" if result is None else result.status,
+            "text": "" if result is None else result.text,
             "name": "",
             "tool_call_id": "",
             "arguments": None,
             "origin": "",
         },
     )
+
+
+def _stop_run(app: WebServer, handler: BaseHTTPRequestHandler, session_id: str) -> None:
+    """停止正在跑的会话。没有这一轮时 ``stopped`` 为 false。"""
+    if not is_session_id(session_id):
+        _send_json(handler, 400, {"error": "bad_session"})
+        return
+    _send_json(handler, 200, {"stopped": app.request_stop(session_id)})
+
+
+def _keep_partial(session_path: Path, text: str) -> None:
+    """停止时把还没写入会话的正文补上。已经落盘的不再写一遍。"""
+    if text == "":
+        return
+    session = Session(session_path)
+    messages = session.load()
+    if messages and messages[-1].role == Role.ASSISTANT and messages[-1].content == text:
+        return
+    session.append(Message(role=Role.ASSISTANT, content=text))
 
 
 def _event_payload(event: ProviderEvent) -> dict[str, object]:
@@ -259,8 +360,12 @@ def _write_event(handler: BaseHTTPRequestHandler, payload: dict[str, object]) ->
         return
 
 
-def _message_text(raw: bytes) -> str | None:
-    """正文必须是带字符串 ``text`` 的 JSON 对象。否则返回 None。"""
+def _message_request(raw: bytes) -> tuple[str, str | None] | None:
+    """正文必须是带字符串 ``text`` 的 JSON 对象。
+
+    ``mode`` 可以不写。写出时只能是 ``react``、``plan``、``reflect``。
+    返回 ``(text, mode)``；``mode`` 为 None 表示沿用启动参数。格式不对返回 None。
+    """
     try:
         payload = json.loads(raw.decode("utf-8"))
     except (UnicodeDecodeError, json.JSONDecodeError):
@@ -270,7 +375,12 @@ def _message_text(raw: bytes) -> str | None:
     text = payload.get("text")
     if not isinstance(text, str):
         return None
-    return text
+    if "mode" not in payload:
+        return text, None
+    mode = payload.get("mode")
+    if not isinstance(mode, str) or mode not in _MODES:
+        return None
+    return text, mode
 
 
 def _read_body(handler: BaseHTTPRequestHandler) -> bytes:
