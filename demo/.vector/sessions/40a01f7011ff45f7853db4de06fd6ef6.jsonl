@@ -1,4 +1,0 @@
-{"role": "user", "content": "读 notes.txt 并用一句话说明内容", "tool_calls": null, "tool_call_id": null, "is_error": false}
-{"role": "assistant", "content": "", "tool_calls": [{"id": "call_00_ET_Mgi60sX4Chsfx957Ksov0872", "name": "read_file", "arguments": {"path": "notes.txt"}}], "tool_call_id": null, "is_error": false}
-{"role": "tool", "content": "1|plan-ok\n2|done", "tool_calls": null, "tool_call_id": "call_00_ET_Mgi60sX4Chsfx957Ksov0872", "is_error": false}
-{"role": "assistant", "content": "notes.txt 的内容是两行简短的状态记录：「plan-ok」和「done」，用来说明计划已通过且任务已完成。", "tool_calls": null, "tool_call_id": null, "is_error": false}

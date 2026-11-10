@@ -1,2 +1,0 @@
-{"role": "user", "content": "项目代号是什么？只回答代号", "tool_calls": null, "tool_call_id": null, "is_error": false}
-{"role": "assistant", "content": "vector-harness", "tool_calls": null, "tool_call_id": null, "is_error": false}
