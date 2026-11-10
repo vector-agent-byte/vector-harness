@@ -1,0 +1,19 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "vector_harness"
+version = "0.1.0"
+requires-python = ">=3.11"
+dependencies = ["openai"]
+
+[project.optional-dependencies]
+dev = ["pytest", "httpx"]
+
+[project.scripts]
+vector-harness = "vector_harness.cli:main"
+vector-harness-web = "vector_harness.web:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
