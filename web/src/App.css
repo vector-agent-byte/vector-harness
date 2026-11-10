@@ -292,11 +292,6 @@
   flex-direction: column;
 }
 
-.run-time {
-  color: #8a8a8a;
-  font-size: 12px;
-}
-
 .session-menu {
   position: fixed;
   z-index: 30;

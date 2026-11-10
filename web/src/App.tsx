@@ -227,20 +227,6 @@ function formatDuration(ms: number): string {
   return `${minutes}分${String(seconds).padStart(2, "0")}秒`
 }
 
-function timingLabel(
-  session: SessionItem,
-  running: boolean,
-  now: number,
-): string | null {
-  if (session.started_at === null) return null
-  const trigger = `${formatClock(session.started_at)} 触发`
-  const elapsed = running
-    ? Math.max(0, now - session.started_at * 1000)
-    : session.duration_ms
-  if (elapsed === null) return trigger
-  return `${trigger} · 耗时 ${formatDuration(elapsed)}`
-}
-
 type SessionMenu = {
   id: string
   x: number
@@ -877,8 +863,6 @@ export default function App() {
 
   const openSession = sessions.find((session) => session.id === openId) ?? null
   const selectedSkill = openSession?.skill ?? null
-  const openTiming =
-    openSession === null ? null : timingLabel(openSession, openSession.id === runningId, now)
   const propsSession = sessions.find((session) => session.id === propsId) ?? null
   const propsTiming = propsSession
     ? sessionProperties(propsSession, propsSession.id === runningId, now)
@@ -949,7 +933,6 @@ export default function App() {
         <header className="topbar">
           <div className="title-block">
             <h1 className="current-title">{openSession ? openSession.title : "会话"}</h1>
-            {openTiming ? <div className="run-time">{openTiming}</div> : null}
           </div>
         </header>
         {errorText ? <div className="error-banner">{errorLabel(errorText)}</div> : null}
