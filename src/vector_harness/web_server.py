@@ -12,7 +12,7 @@ import threading
 from dataclasses import dataclass
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from urllib.parse import parse_qs, unquote, urlsplit
+from urllib.parse import parse_qs, quote, unquote, urlsplit
 
 from vector_harness.cli import build_agent
 from vector_harness.core.session import Session
@@ -40,6 +40,33 @@ _MODES = {
     "react": (False, False),
     "plan": (True, False),
     "reflect": (False, True),
+}
+_PREVIEW_LIMIT = 2 * 1024 * 1024
+_TEXT_SUFFIXES = {
+    ".txt",
+    ".md",
+    ".json",
+    ".py",
+    ".csv",
+    ".log",
+    ".yml",
+    ".yaml",
+    ".toml",
+    ".ini",
+    ".xml",
+    ".html",
+    ".css",
+    ".js",
+    ".ts",
+    ".tsx",
+    ".jsx",
+}
+_IMAGE_TYPES = {
+    ".png": "image/png",
+    ".jpg": "image/jpeg",
+    ".jpeg": "image/jpeg",
+    ".gif": "image/gif",
+    ".webp": "image/webp",
 }
 
 
@@ -186,6 +213,12 @@ def _route_api(
         return
     if method == "POST" and segments == ["api", "workdir"]:
         _set_workdir(app, handler)
+        return
+    if method == "GET" and segments == ["api", "file", "bytes"]:
+        _send_file_bytes(handler)
+        return
+    if method == "GET" and segments == ["api", "file"]:
+        _send_file_meta(handler)
         return
     if method == "GET" and segments == ["api", "sessions"]:
         _send_json(
@@ -648,6 +681,107 @@ def _media_type(path: Path) -> str:
     return guessed
 
 
+def file_kind(path: Path) -> dict | None:
+    """文件预览信息。目录、缺失或读不出来时返回 None。"""
+    try:
+        if not path.is_file():
+            return None
+        size = path.stat().st_size
+    except OSError:
+        return None
+    info: dict = {"name": path.name, "size": size}
+    suffix = path.suffix.lower()
+    if suffix in _TEXT_SUFFIXES or suffix in _IMAGE_TYPES:
+        if size > _PREVIEW_LIMIT:
+            info["kind"] = "too_large"
+            return info
+    if suffix in _TEXT_SUFFIXES:
+        try:
+            info["text"] = path.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            return None
+        info["kind"] = "text"
+        return info
+    media = _IMAGE_TYPES.get(suffix)
+    if media is not None:
+        info["kind"] = "image"
+        info["media_type"] = media
+        return info
+    info["kind"] = "unsupported"
+    return info
+
+
+def _request_file(handler: BaseHTTPRequestHandler) -> tuple[Path | None, dict[str, list[str]]]:
+    """解析查询里的 path。缺失、不是文件或读失败时已经写好响应，返回 None。"""
+    query = parse_qs(urlsplit(handler.path).query)
+    raw_values = query.get("path", [])
+    raw = raw_values[0] if raw_values else ""
+    if raw.strip() == "":
+        _send_json(handler, 404, {"error": "not_found"})
+        return None, query
+    try:
+        resolved = Path(raw).expanduser().resolve()
+    except OSError:
+        _send_json(handler, 404, {"error": "not_found"})
+        return None, query
+    if not resolved.exists():
+        _send_json(handler, 404, {"error": "not_found"})
+        return None, query
+    if resolved.is_dir():
+        _send_json(handler, 400, {"error": "not_a_file"})
+        return None, query
+    return resolved, query
+
+
+def _send_file_meta(handler: BaseHTTPRequestHandler) -> None:
+    resolved, _query = _request_file(handler)
+    if resolved is None:
+        return
+    info = file_kind(resolved)
+    if info is None:
+        _send_json(handler, 404, {"error": "not_found"})
+        return
+    _send_json(handler, 200, info)
+
+
+def _send_file_bytes(handler: BaseHTTPRequestHandler) -> None:
+    resolved, query = _request_file(handler)
+    if resolved is None:
+        return
+    inline = (query.get("inline") or [""])[0] == "1"
+    info = file_kind(resolved)
+    if info is None:
+        _send_json(handler, 404, {"error": "not_found"})
+        return
+    if inline:
+        if info["kind"] == "too_large" and resolved.suffix.lower() in _IMAGE_TYPES:
+            _send_json(handler, 413, {"error": "too_large"})
+            return
+        if info["kind"] != "image":
+            _send_json(handler, 400, {"error": "not_an_image"})
+            return
+        try:
+            body = resolved.read_bytes()
+        except OSError:
+            _send_json(handler, 404, {"error": "not_found"})
+            return
+        _send_bytes(handler, 200, body, str(info["media_type"]))
+        return
+    try:
+        body = resolved.read_bytes()
+    except OSError:
+        _send_json(handler, 404, {"error": "not_found"})
+        return
+    disposition = f"attachment; filename*=UTF-8''{quote(resolved.name)}"
+    _send_bytes(
+        handler,
+        200,
+        body,
+        "application/octet-stream",
+        (("Content-Disposition", disposition),),
+    )
+
+
 def _send_json(handler: BaseHTTPRequestHandler, status: int, payload: object) -> None:
     body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
     _send_bytes(handler, status, body, _JSON)
@@ -658,9 +792,12 @@ def _send_bytes(
     status: int,
     body: bytes,
     content_type: str,
+    headers: tuple[tuple[str, str], ...] = (),
 ) -> None:
     handler.send_response(status)
     handler.send_header("Content-Type", content_type)
     handler.send_header("Content-Length", str(len(body)))
+    for name, value in headers:
+        handler.send_header(name, value)
     handler.end_headers()
     handler.wfile.write(body)

@@ -755,3 +755,68 @@ def test_a_turn_records_when_it_started_and_how_long_it_took(tmp_path: Path):
         assert body["duration_ms"] == duration
     finally:
         server.shutdown()
+
+
+def test_file_preview_and_image_inline(tmp_path: Path):
+    notes = tmp_path / "notes.txt"
+    notes.write_text("你好", encoding="utf-8")
+    image = tmp_path / "pic.png"
+    image.write_bytes(b"\x89PNG\r\n")
+    server = WebServer(WebSettings(workspace=tmp_path), provider=object())
+    server.start()
+    try:
+        base = f"http://127.0.0.1:{server.port}"
+        with httpx.Client(trust_env=False) as client:
+            text = client.get(f"{base}/api/file", params={"path": str(notes)})
+            assert text.status_code == 200
+            assert text.json()["kind"] == "text"
+            assert text.json()["text"] == "你好"
+            meta = client.get(f"{base}/api/file", params={"path": str(image)})
+            assert meta.json()["kind"] == "image"
+            assert meta.json()["media_type"] == "image/png"
+            inline = client.get(f"{base}/api/file/bytes", params={"path": str(image), "inline": "1"})
+            assert inline.status_code == 200
+            assert inline.headers["content-type"].startswith("image/png")
+            assert inline.content == b"\x89PNG\r\n"
+            assert "attachment" not in inline.headers.get("content-disposition", "")
+    finally:
+        server.shutdown()
+
+
+def test_oversize_image_downloads_but_does_not_inline(tmp_path: Path):
+    image = tmp_path / "big.png"
+    image.write_bytes(b"x" * (2 * 1024 * 1024 + 1))
+    server = WebServer(WebSettings(workspace=tmp_path), provider=object())
+    server.start()
+    try:
+        base = f"http://127.0.0.1:{server.port}"
+        with httpx.Client(trust_env=False) as client:
+            meta = client.get(f"{base}/api/file", params={"path": str(image)})
+            assert meta.json()["kind"] == "too_large"
+            inline = client.get(f"{base}/api/file/bytes", params={"path": str(image), "inline": "1"})
+            assert inline.status_code == 413
+            assert inline.json() == {"error": "too_large"}
+            saved = client.get(f"{base}/api/file/bytes", params={"path": str(image)})
+            assert saved.status_code == 200
+            assert saved.content == b"x" * (2 * 1024 * 1024 + 1)
+            assert "attachment" in saved.headers["content-disposition"].lower()
+    finally:
+        server.shutdown()
+
+
+def test_directory_and_other_file_are_not_preview_bytes(tmp_path: Path):
+    (tmp_path / "data.bin").write_bytes(b"\x00\x01")
+    server = WebServer(WebSettings(workspace=tmp_path), provider=object())
+    server.start()
+    try:
+        base = f"http://127.0.0.1:{server.port}"
+        with httpx.Client(trust_env=False) as client:
+            folder = client.get(f"{base}/api/file", params={"path": str(tmp_path)})
+            assert folder.status_code == 400
+            assert folder.json() == {"error": "not_a_file"}
+            other = client.get(f"{base}/api/file", params={"path": str(tmp_path / "data.bin")})
+            assert other.json()["kind"] == "unsupported"
+            missing = client.get(f"{base}/api/file", params={"path": str(tmp_path / "nope.txt")})
+            assert missing.status_code == 404
+    finally:
+        server.shutdown()
