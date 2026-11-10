@@ -37,9 +37,13 @@ class _Skill:
 
 
 class Skills:
-    def __init__(self, directory: Path) -> None:
-        """技能目录。读取时才扫文件，构造时不加载。"""
+    def __init__(self, directory: Path, *, only: str | None = None) -> None:
+        """技能目录。读取时才扫文件，构造时不加载。
+
+        ``only`` 有值时，索引和读取都只保留这一个名字。
+        """
         self.directory = directory
+        self.only = only
 
     def _load(self) -> dict[str, _Skill]:
         """收集目录下的 ``*.md`` 和一层 ``SKILL.md``。同名时后读到的覆盖先读到的。"""
@@ -57,13 +61,28 @@ class Skills:
             meta, body = parsed
             name = meta["name"]
             found[name] = _Skill(name=name, description=meta["description"], body=body)
-        return found
+        if self.only is None:
+            return found
+        skill = found.get(self.only)
+        if skill is None:
+            return {}
+        return {self.only: skill}
+
+    def catalog(self) -> list[dict[str, str]]:
+        """按名字排序的技能清单。不受 ``only`` 限制，供页面展示。"""
+        listed = Skills(self.directory)._load()
+        return [
+            {"name": name, "description": listed[name].description}
+            for name in sorted(listed)
+        ]
 
     def index_prompt(self) -> str:
         """生成放进系统提示的技能索引。目录不存在时返回空字符串。"""
         if not self.directory.is_dir():
             return ""
         skills = self._load()
+        if self.only is not None and not skills:
+            return ""
         lines = ["Skills:"]
         for name in sorted(skills):
             lines.append(f"- {name}: {skills[name].description}")
@@ -99,8 +118,11 @@ class _ReadSkill:
         return skill.body
 
 
-def attach_skills(loop: Loop, directory: Path) -> None:
-    """把技能索引进系统提示，并装上 ``read_skill``。同名工具就地替换。"""
-    skills = Skills(directory)
+def attach_skills(loop: Loop, directory: Path, *, only: str | None = None) -> None:
+    """把技能索引进系统提示，并装上 ``read_skill``。同名工具就地替换。
+
+    ``only`` 有值时，索引和读取都只包含这一个技能。
+    """
+    skills = Skills(directory, only=only)
     loop.install_prompt(skills.index_prompt())
     loop.replace_tool(skills.read_tool())

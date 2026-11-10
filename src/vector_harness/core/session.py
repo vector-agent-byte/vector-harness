@@ -1,12 +1,13 @@
 """把一轮对话存成 JSONL。
 
 每行一个消息，键固定为 ``role``、``content``、``tool_calls``、``tool_call_id``、
-``is_error``。``path is None`` 的会话只留在内存里，给子循环用，不碰磁盘。
+``is_error``。写下时再补 ``created_at``。``path is None`` 的会话只留在内存里，给子循环用，不碰磁盘。
 """
 
 from __future__ import annotations
 
 import json
+import time
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -48,7 +49,12 @@ class Session:
         return messages
 
     def append(self, message: Message) -> None:
-        """追加一条。文件在第一次写入时才创建，所以只打开会话不会留下空文件。"""
+        """追加一条。文件在第一次写入时才创建，所以只打开会话不会留下空文件。
+
+        还没有写下时间的消息，在这里记上当前时间。用户发出的文字和模型返回的文字都走这里。
+        """
+        if message.created_at is None:
+            message.created_at = time.time()
         if self.path is None:
             self._messages.append(message)
             return

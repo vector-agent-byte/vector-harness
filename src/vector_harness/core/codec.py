@@ -2,6 +2,7 @@
 
 会话落盘，以及判断上下文变换有没有改内容，都用这一份。
 键固定为 ``role``、``content``、``tool_calls``、``tool_call_id``、``is_error``。
+有写下时间时再带上 ``created_at``。旧行没有这一项，读出来是 ``None``。
 """
 
 from __future__ import annotations
@@ -21,13 +22,16 @@ def message_to_dict(message: Message) -> dict:
             {"id": call.id, "name": call.name, "arguments": call.arguments}
             for call in message.tool_calls
         ]
-    return {
+    payload = {
         "role": message.role,
         "content": message.content,
         "tool_calls": tool_calls,
         "tool_call_id": message.tool_call_id,
         "is_error": message.is_error,
     }
+    if isinstance(message.created_at, (int, float)) and not isinstance(message.created_at, bool):
+        payload["created_at"] = float(message.created_at)
+    return payload
 
 
 def message_from_dict(data: dict) -> Message:
@@ -45,12 +49,19 @@ def message_from_dict(data: dict) -> Message:
             )
             for item in raw_tool_calls
         ]
+    created = data.get("created_at")
+    created_at = (
+        float(created)
+        if isinstance(created, (int, float)) and not isinstance(created, bool)
+        else None
+    )
     return Message(
         role=data["role"],
         content=data["content"],
         tool_calls=tool_calls,
         tool_call_id=data.get("tool_call_id"),
         is_error=data.get("is_error", False),
+        created_at=created_at,
     )
 
 

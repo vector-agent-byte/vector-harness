@@ -12,17 +12,24 @@ import threading
 from dataclasses import dataclass
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from urllib.parse import unquote, urlsplit
+from urllib.parse import parse_qs, unquote, urlsplit
 
 from vector_harness.cli import build_agent
 from vector_harness.core.session import Session
 from vector_harness.tools.shell import Shell, signal_kill
 from vector_harness.types import Message, ProviderEvent, Role
+from vector_harness.patterns.skills import Skills
 from vector_harness.web_sessions import (
+    begin_run,
     create_session,
+    delete_session,
+    finish_run,
     is_session_id,
     list_sessions,
     read_messages,
+    session_run,
+    session_skill,
+    set_session_skill,
 )
 
 _NO_DIST = "页面还没有构建。请先在 web/ 执行 npm run build。\n"
@@ -52,6 +59,7 @@ class WebSettings:
 class WebServer:
     def __init__(self, settings: WebSettings, provider: object) -> None:
         self.settings = settings
+        self.workdir = settings.workspace.resolve()
         self.provider = provider
         self.port = 0
         self.running_id: str | None = None
@@ -133,6 +141,9 @@ class _Handler(BaseHTTPRequestHandler):
     def do_POST(self) -> None:
         _route(self, "POST")
 
+    def do_DELETE(self) -> None:
+        _route(self, "DELETE")
+
     def log_message(self, format: str, *args: object) -> None:
         return
 
@@ -164,6 +175,18 @@ def _route_api(
     segments: list[str],
 ) -> None:
     workspace = app.settings.workspace
+    if method == "GET" and segments == ["api", "skills"]:
+        _send_json(handler, 200, {"skills": _skill_catalog(app)})
+        return
+    if method == "GET" and segments == ["api", "workdir"]:
+        _send_json(handler, 200, {"path": str(app.workdir)})
+        return
+    if method == "GET" and segments == ["api", "dirs"]:
+        _send_dirs(handler, app.workdir)
+        return
+    if method == "POST" and segments == ["api", "workdir"]:
+        _set_workdir(app, handler)
+        return
     if method == "GET" and segments == ["api", "sessions"]:
         _send_json(
             handler,
@@ -181,6 +204,9 @@ def _route_api(
     if method == "GET" and len(segments) == 3 and segments[:2] == ["api", "sessions"]:
         _send_session(handler, workspace, segments[2])
         return
+    if method == "DELETE" and len(segments) == 3 and segments[:2] == ["api", "sessions"]:
+        _delete_session(app, handler, segments[2])
+        return
     if (
         method == "POST"
         and len(segments) == 4
@@ -196,6 +222,14 @@ def _route_api(
         and segments[3] == "stop"
     ):
         _stop_run(app, handler, segments[2])
+        return
+    if (
+        method == "POST"
+        and len(segments) == 4
+        and segments[:2] == ["api", "sessions"]
+        and segments[3] == "skill"
+    ):
+        _set_skill(app, handler, segments[2])
         return
     _send_json(handler, 404, {"error": "not_found"})
 
@@ -228,10 +262,12 @@ def _send_message(app: WebServer, handler: BaseHTTPRequestHandler, session_id: s
         return
     app._cancel.clear()
     app.running_id = session_id
+    begin_run(app.settings.workspace, session_id)
     try:
         _stream_turn(app, handler, session_path, text, plan=plan, reflect=reflect)
     finally:
         app.running_id = None
+        finish_run(app.settings.workspace, session_id)
         app._lock.release()
 
 
@@ -246,11 +282,13 @@ def _stream_turn(
 ) -> None:
     """新建一轮 runner，把模型事件和最后的 run_result 逐条写出去。"""
     settings = app.settings
+    chosen = session_skill(settings.workspace, session_path.stem)
     agent = build_agent(
         provider=app.provider,
-        workspace=settings.workspace,
+        workspace=app.workdir,
         session=Session(session_path),
-        skills_dir=settings.skills_dir,
+        skills_dir=settings.skills_dir if chosen else None,
+        skill_name=chosen,
         memory_path=settings.memory_path,
         compact=settings.compact,
         plan=plan,
@@ -305,6 +343,25 @@ def _stream_turn(
             "origin": "",
         },
     )
+
+
+def _delete_session(app: WebServer, handler: BaseHTTPRequestHandler, session_id: str) -> None:
+    """删掉一份空闲会话。正在跑的那一轮拿着锁，这里拿不到就拒绝。"""
+    if not is_session_id(session_id):
+        _send_json(handler, 400, {"error": "bad_session"})
+        return
+    if not app._lock.acquire(blocking=False):
+        _send_json(handler, 409, {"error": "busy"})
+        return
+    try:
+        try:
+            delete_session(app.settings.workspace, session_id)
+        except FileNotFoundError:
+            _send_json(handler, 404, {"error": "not_found"})
+            return
+        _send_json(handler, 200, {"deleted": True})
+    finally:
+        app._lock.release()
 
 
 def _stop_run(app: WebServer, handler: BaseHTTPRequestHandler, session_id: str) -> None:
@@ -396,6 +453,119 @@ def _read_body(handler: BaseHTTPRequestHandler) -> bytes:
     return handler.rfile.read(size)
 
 
+def _skill_catalog(app: WebServer) -> list[dict[str, str]]:
+    directory = app.settings.skills_dir
+    if directory is None:
+        return []
+    return Skills(directory).catalog()
+
+
+def _set_skill(app: WebServer, handler: BaseHTTPRequestHandler, session_id: str) -> None:
+    """给这一份会话单独记下技能。空名字表示不使用技能。"""
+    if not is_session_id(session_id):
+        _send_json(handler, 400, {"error": "bad_session"})
+        return
+    payload = _object_body(_read_body(handler))
+    if payload is None or "name" not in payload:
+        _send_json(handler, 400, {"error": "bad_request"})
+        return
+    name = payload.get("name")
+    if name is not None and not isinstance(name, str):
+        _send_json(handler, 400, {"error": "bad_request"})
+        return
+    chosen = name.strip() if isinstance(name, str) else ""
+    if chosen and chosen not in {item["name"] for item in _skill_catalog(app)}:
+        _send_json(handler, 400, {"error": "unknown_skill"})
+        return
+    try:
+        set_session_skill(app.settings.workspace, session_id, chosen or None)
+    except FileNotFoundError:
+        _send_json(handler, 404, {"error": "not_found"})
+        return
+    _send_json(handler, 200, {"id": session_id, "skill": chosen or None})
+
+
+def _send_dirs(handler: BaseHTTPRequestHandler, workdir: Path) -> None:
+    """列出某个目录下的子目录和文件。没给路径时从当前工作目录开始。"""
+    query = parse_qs(urlsplit(handler.path).query)
+    raw_values = query.get("path", [])
+    raw = raw_values[0] if raw_values else ""
+    target = workdir if raw.strip() == "" else Path(raw)
+    listing = _dir_listing(target)
+    if listing is None:
+        _send_json(handler, 400, {"error": "not_a_directory"})
+        return
+    _send_json(handler, 200, listing)
+
+
+def _set_workdir(app: WebServer, handler: BaseHTTPRequestHandler) -> None:
+    """改工具使用的工作目录。会话仍留在启动服务时的目录里。有一轮正在跑时不改。"""
+    payload = _object_body(_read_body(handler))
+    if payload is None:
+        _send_json(handler, 400, {"error": "bad_request"})
+        return
+    raw = payload.get("path")
+    if not isinstance(raw, str) or raw.strip() == "":
+        _send_json(handler, 400, {"error": "bad_request"})
+        return
+    listing = _dir_listing(Path(raw))
+    if listing is None:
+        _send_json(handler, 400, {"error": "not_a_directory"})
+        return
+    if not app._lock.acquire(blocking=False):
+        _send_json(handler, 409, {"error": "busy"})
+        return
+    try:
+        app.workdir = Path(listing["path"])
+        _send_json(handler, 200, {"path": str(app.workdir)})
+    finally:
+        app._lock.release()
+
+
+def _dir_listing(path: Path) -> dict | None:
+    """目录清单。点开头的名字不列出。路径不是目录时返回 None。"""
+    try:
+        resolved = path.expanduser().resolve()
+    except OSError:
+        return None
+    if not resolved.is_dir():
+        return None
+    dirs: list[dict[str, str]] = []
+    files: list[dict[str, str]] = []
+    try:
+        children = sorted(resolved.iterdir(), key=lambda item: item.name.lower())
+    except OSError:
+        children = []
+    for child in children:
+        if child.name.startswith("."):
+            continue
+        try:
+            entry = {"name": child.name, "path": str(child.resolve())}
+            if child.is_dir():
+                dirs.append(entry)
+            elif child.is_file():
+                files.append(entry)
+        except OSError:
+            continue
+    parent = resolved.parent
+    return {
+        "path": str(resolved),
+        "parent": None if parent == resolved else str(parent),
+        "dirs": dirs,
+        "files": files,
+    }
+
+
+def _object_body(raw: bytes) -> dict | None:
+    try:
+        payload = json.loads(raw.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError):
+        return None
+    if not isinstance(payload, dict):
+        return None
+    return payload
+
+
 def _send_session(handler: BaseHTTPRequestHandler, workspace: Path, session_id: str) -> None:
     # 先按段解码，``%2f`` 仍留在这一段里，不会变成目录分隔符。
     if not is_session_id(session_id):
@@ -406,7 +576,18 @@ def _send_session(handler: BaseHTTPRequestHandler, workspace: Path, session_id: 
     except FileNotFoundError:
         _send_json(handler, 404, {"error": "not_found"})
         return
-    _send_json(handler, 200, {"id": session_id, "messages": messages})
+    started_at, duration_ms = session_run(workspace, session_id)
+    _send_json(
+        handler,
+        200,
+        {
+            "id": session_id,
+            "messages": messages,
+            "skill": session_skill(workspace, session_id),
+            "started_at": started_at,
+            "duration_ms": duration_ms,
+        },
+    )
 
 
 def _serve_static(app: WebServer, handler: BaseHTTPRequestHandler) -> None:

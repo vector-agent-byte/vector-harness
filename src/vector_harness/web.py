@@ -41,7 +41,11 @@ def _parser() -> argparse.ArgumentParser:
         default=None,
         help="Memory file to use instead of the workspace default.",
     )
-    parser.add_argument("--skills", default=None)
+    parser.add_argument(
+        "--skills",
+        default=None,
+        help="Skill directory. Defaults to ./skills when that directory exists.",
+    )
     parser.add_argument("--compact", action="store_true")
     parser.add_argument("--plan", action="store_true")
     parser.add_argument("--reflect", action="store_true")
@@ -108,6 +112,10 @@ def main(
         if not skills_dir.is_dir():
             print("skills directory not found", file=sys.stderr)
             return 1
+    else:
+        candidate = Path.cwd() / "skills"
+        if candidate.is_dir():
+            skills_dir = candidate
     if provider is None:
         env = merged_env(
             os.environ if environ is None else environ,

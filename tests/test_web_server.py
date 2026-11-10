@@ -54,7 +54,13 @@ def test_lists_creates_and_reads_a_session(tmp_path: Path):
             assert missing.status_code == 404
             assert missing.json() == {"error": "not_found"}
             body = client.get(f"{base}/api/sessions/{session_id}")
-            assert body.json() == {"id": session_id, "messages": []}
+            assert body.json() == {
+                "id": session_id,
+                "messages": [],
+                "skill": None,
+                "started_at": None,
+                "duration_ms": None,
+            }
             assert client.get(f"{base}/api/unknown").status_code == 404
     finally:
         server.shutdown()
@@ -412,4 +418,340 @@ def test_disconnect_finishes_the_turn_and_blocks_a_second_send(tmp_path: Path):
         assert "仍会写完" in stored
     finally:
         gate.set()
+        server.shutdown()
+
+
+def _skill_file(directory: Path, name: str, description: str) -> None:
+    directory.mkdir(parents=True, exist_ok=True)
+    (directory / f"{name}.md").write_text(
+        f"---\nname: {name}\ndescription: {description}\n---\n{name.upper()}_BODY\n",
+        encoding="utf-8",
+    )
+
+
+def test_each_session_keeps_its_own_skill(tmp_path: Path):
+    skills = tmp_path / "skills"
+    _skill_file(skills, "alpha", "first skill")
+    _skill_file(skills, "beta", "second skill")
+    (skills / "skip.txt").write_text("nope", encoding="utf-8")
+    server = WebServer(
+        WebSettings(workspace=tmp_path, skills_dir=skills), provider=object()
+    )
+    server.start()
+    try:
+        base = f"http://127.0.0.1:{server.port}"
+        with httpx.Client(trust_env=False) as client:
+            listed = client.get(f"{base}/api/skills")
+            assert listed.status_code == 200
+            assert listed.json() == {
+                "skills": [
+                    {"name": "alpha", "description": "first skill"},
+                    {"name": "beta", "description": "second skill"},
+                ]
+            }
+            first = client.post(f"{base}/api/sessions").json()["id"]
+            second = client.post(f"{base}/api/sessions").json()["id"]
+            chosen = client.post(
+                f"{base}/api/sessions/{first}/skill",
+                json={"name": "beta"},
+            )
+            assert chosen.status_code == 200
+            assert chosen.json() == {"id": first, "skill": "beta"}
+            unknown = client.post(
+                f"{base}/api/sessions/{first}/skill",
+                json={"name": "missing"},
+            )
+            assert unknown.status_code == 400
+            assert unknown.json() == {"error": "unknown_skill"}
+            assert client.get(f"{base}/api/sessions/{first}").json()["skill"] == "beta"
+            assert client.get(f"{base}/api/sessions/{second}").json()["skill"] is None
+            cleared = client.post(
+                f"{base}/api/sessions/{first}/skill",
+                json={"name": None},
+            )
+            assert cleared.status_code == 200
+            assert cleared.json()["skill"] is None
+    finally:
+        server.shutdown()
+
+
+def test_turn_prompt_contains_only_the_selected_skill(tmp_path: Path):
+    skills = tmp_path / "skills"
+    _skill_file(skills, "alpha", "first skill")
+    _skill_file(skills, "beta", "second skill")
+    session_id = create_session(tmp_path)
+    provider = ScriptedProvider(turns=[ScriptedTurn(content="好"), ScriptedTurn(content="好")])
+    server = WebServer(
+        WebSettings(workspace=tmp_path, skills_dir=skills), provider=provider
+    )
+    server.start()
+    try:
+        base = f"http://127.0.0.1:{server.port}"
+        with httpx.Client(trust_env=False) as client:
+            bare = client.post(
+                f"{base}/api/sessions/{session_id}/messages",
+                json={"text": "先不选"},
+            )
+            assert bare.status_code == 200
+            chosen = client.post(
+                f"{base}/api/sessions/{session_id}/skill",
+                json={"name": "alpha"},
+            )
+            assert chosen.status_code == 200
+            used = client.post(
+                f"{base}/api/sessions/{session_id}/messages",
+                json={"text": "用 alpha"},
+            )
+            assert used.status_code == 200
+        bare_call, used_call = provider.calls
+        assert "alpha" not in bare_call["system"]
+        assert "read_skill" not in bare_call["tools"]
+        assert "- alpha: first skill" in used_call["system"]
+        assert "beta" not in used_call["system"]
+        assert "ALPHA_BODY" not in used_call["system"]
+        assert "read_skill" in used_call["tools"]
+    finally:
+        server.shutdown()
+
+
+def test_workdir_change_keeps_the_session_and_moves_tools(tmp_path: Path):
+    home = tmp_path / "home"
+    other = tmp_path / "other"
+    home.mkdir()
+    other.mkdir()
+    (other / "nested").mkdir()
+    (other / "notes.txt").write_text("x", encoding="utf-8")
+    (home / ".vector").mkdir()
+    (home / ".vector" / "MEMORY.md").write_text("HOME_MEMORY\n", encoding="utf-8")
+    session_id = create_session(home)
+
+    class Capture:
+        def __init__(self) -> None:
+            self.system = ""
+            self.roots: list[Path] = []
+
+        async def stream(self, *, system: str, messages: list, tools: list):
+            self.system = system
+            self.roots = [tool.root.resolve() for tool in tools if hasattr(tool, "root")]
+            yield ProviderEvent(kind="text_delta", text="好")
+
+    provider = Capture()
+    server = WebServer(
+        WebSettings(workspace=home, memory_path=home / ".vector" / "MEMORY.md"),
+        provider=provider,
+    )
+    server.start()
+    try:
+        base = f"http://127.0.0.1:{server.port}"
+        with httpx.Client(trust_env=False) as client:
+            current = client.get(f"{base}/api/workdir")
+            assert current.json()["path"] == str(home.resolve())
+            listing = client.get(f"{base}/api/dirs", params={"path": str(other)})
+            assert listing.status_code == 200
+            body = listing.json()
+            assert body["path"] == str(other.resolve())
+            assert body["parent"] == str(tmp_path.resolve())
+            assert body["dirs"] == [{"name": "nested", "path": str((other / "nested").resolve())}]
+            assert body["files"] == [{"name": "notes.txt", "path": str((other / "notes.txt").resolve())}]
+            missing = client.post(f"{base}/api/workdir", json={"path": str(other / "notes.txt")})
+            assert missing.status_code == 400
+            assert missing.json() == {"error": "not_a_directory"}
+            changed = client.post(f"{base}/api/workdir", json={"path": str(other)})
+            assert changed.status_code == 200
+            assert changed.json() == {"path": str(other.resolve())}
+            listed = client.get(f"{base}/api/sessions").json()["sessions"]
+            assert any(item["id"] == session_id for item in listed)
+            sent = client.post(
+                f"{base}/api/sessions/{session_id}/messages",
+                json={"text": "在新目录里干活"},
+            )
+            assert sent.status_code == 200
+        assert "HOME_MEMORY" in provider.system
+        assert provider.roots
+        assert all(root == other.resolve() for root in provider.roots)
+    finally:
+        server.shutdown()
+
+
+def test_workdir_change_is_refused_while_a_turn_is_running(tmp_path: Path):
+    first = tmp_path / "first"
+    second = tmp_path / "second"
+    first.mkdir()
+    second.mkdir()
+    session_id = create_session(first)
+    gate = threading.Event()
+
+    class HoldAfterDelta:
+        async def stream(self, *, system: str, messages: list, tools: list):
+            yield ProviderEvent(kind="text_delta", text="好")
+            await asyncio.to_thread(gate.wait)
+
+    server = WebServer(WebSettings(workspace=first), provider=HoldAfterDelta())
+    server.start()
+    seen = threading.Event()
+
+    def read() -> None:
+        with httpx.stream(
+            "POST",
+            f"http://127.0.0.1:{server.port}/api/sessions/{session_id}/messages",
+            json={"text": "卡住"},
+            timeout=None,
+            trust_env=False,
+        ) as response:
+            assert response.status_code == 200
+            for chunk in response.iter_text():
+                if "好" in chunk:
+                    seen.set()
+                    break
+
+    thread = threading.Thread(target=read, daemon=True)
+    thread.start()
+    assert seen.wait(2)
+    try:
+        with httpx.Client(trust_env=False) as client:
+            refused = client.post(
+                f"http://127.0.0.1:{server.port}/api/workdir",
+                json={"path": str(second)},
+            )
+            assert refused.status_code == 409
+            assert refused.json() == {"error": "busy"}
+            assert client.get(f"http://127.0.0.1:{server.port}/api/workdir").json()["path"] == str(
+                first.resolve()
+            )
+    finally:
+        gate.set()
+        thread.join(2)
+        server.shutdown()
+
+
+def test_delete_removes_the_session_and_its_skill(tmp_path: Path):
+    skills = tmp_path / "skills"
+    _skill_file(skills, "alpha", "first skill")
+    server = WebServer(
+        WebSettings(workspace=tmp_path, skills_dir=skills), provider=object()
+    )
+    server.start()
+    try:
+        base = f"http://127.0.0.1:{server.port}"
+        with httpx.Client(trust_env=False) as client:
+            session_id = client.post(f"{base}/api/sessions").json()["id"]
+            other = client.post(f"{base}/api/sessions").json()["id"]
+            assert client.post(
+                f"{base}/api/sessions/{session_id}/skill", json={"name": "alpha"}
+            ).status_code == 200
+            escaped = client.delete(f"{base}/api/sessions/%2e%2e%2fsecret")
+            assert escaped.status_code == 400
+            assert not (tmp_path / "secret").exists()
+            missing = client.delete(f"{base}/api/sessions/{'a' * 32}")
+            assert missing.status_code == 404
+            deleted = client.delete(f"{base}/api/sessions/{session_id}")
+            assert deleted.status_code == 200
+            assert deleted.json() == {"deleted": True}
+            assert client.get(f"{base}/api/sessions/{session_id}").status_code == 404
+            directory = tmp_path / ".vector" / "sessions"
+            assert not (directory / f"{session_id}.jsonl").exists()
+            assert not (directory / f"{session_id}.skill").exists()
+            listed = client.get(f"{base}/api/sessions").json()["sessions"]
+            assert [item["id"] for item in listed] == [other]
+    finally:
+        server.shutdown()
+
+
+def test_delete_is_refused_while_the_session_is_running(tmp_path: Path):
+    session_id = create_session(tmp_path)
+    gate = threading.Event()
+
+    class HoldAfterDelta:
+        async def stream(self, *, system: str, messages: list, tools: list):
+            yield ProviderEvent(kind="text_delta", text="好")
+            await asyncio.to_thread(gate.wait)
+
+    server = WebServer(WebSettings(workspace=tmp_path), provider=HoldAfterDelta())
+    server.start()
+    seen = threading.Event()
+
+    def read() -> None:
+        with httpx.stream(
+            "POST",
+            f"http://127.0.0.1:{server.port}/api/sessions/{session_id}/messages",
+            json={"text": "卡住"},
+            timeout=None,
+            trust_env=False,
+        ) as response:
+            assert response.status_code == 200
+            for chunk in response.iter_text():
+                if "好" in chunk:
+                    seen.set()
+                    break
+
+    thread = threading.Thread(target=read, daemon=True)
+    thread.start()
+    assert seen.wait(2)
+    try:
+        with httpx.Client(trust_env=False) as client:
+            refused = client.delete(
+                f"http://127.0.0.1:{server.port}/api/sessions/{session_id}"
+            )
+            assert refused.status_code == 409
+            assert refused.json() == {"error": "busy"}
+            assert (
+                tmp_path / ".vector" / "sessions" / f"{session_id}.jsonl"
+            ).is_file()
+    finally:
+        gate.set()
+        thread.join(2)
+        server.shutdown()
+
+
+def test_user_text_and_reply_each_record_when_they_were_written(tmp_path: Path):
+    session_id = create_session(tmp_path)
+    provider = ScriptedProvider(turns=[ScriptedTurn(content="返回的文字")])
+    server = WebServer(WebSettings(workspace=tmp_path), provider=provider)
+    server.start()
+    try:
+        base = f"http://127.0.0.1:{server.port}"
+        before = time.time()
+        with httpx.Client(trust_env=False) as client:
+            sent = client.post(
+                f"{base}/api/sessions/{session_id}/messages",
+                json={"text": "用户的文字"},
+            )
+            assert sent.status_code == 200
+            after = time.time()
+            messages = client.get(f"{base}/api/sessions/{session_id}").json()["messages"]
+        user = messages[0]
+        reply = messages[-1]
+        assert user["role"] == "user" and user["content"] == "用户的文字"
+        assert reply["role"] == "assistant" and reply["content"] == "返回的文字"
+        assert before <= user["created_at"] <= reply["created_at"] <= after
+    finally:
+        server.shutdown()
+
+
+def test_a_turn_records_when_it_started_and_how_long_it_took(tmp_path: Path):
+    session_id = create_session(tmp_path)
+    provider = ScriptedProvider(turns=[ScriptedTurn(content="好")])
+    server = WebServer(WebSettings(workspace=tmp_path), provider=provider)
+    server.start()
+    try:
+        base = f"http://127.0.0.1:{server.port}"
+        before = time.time()
+        with httpx.Client(trust_env=False) as client:
+            sent = client.post(
+                f"{base}/api/sessions/{session_id}/messages",
+                json={"text": "开始"},
+            )
+            assert sent.status_code == 200
+            after = time.time()
+            listed = client.get(f"{base}/api/sessions").json()["sessions"]
+            body = client.get(f"{base}/api/sessions/{session_id}").json()
+        assert len(listed) == 1
+        started = listed[0]["started_at"]
+        duration = listed[0]["duration_ms"]
+        assert isinstance(started, float)
+        assert before <= started <= after
+        assert isinstance(duration, int) and duration >= 0
+        assert body["started_at"] == started
+        assert body["duration_ms"] == duration
+    finally:
         server.shutdown()

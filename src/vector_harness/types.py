@@ -70,7 +70,8 @@ class Message:
 
     ``role`` 是 ``user``、``assistant`` 或 ``tool``。助手消息可以带
     ``tool_calls``。工具消息用 ``tool_call_id`` 对上那一次调用，
-    ``is_error`` 标记这次工具结果是失败。
+    ``is_error`` 标记这次工具结果是失败。``created_at`` 是这条文字写下的
+    Unix 秒，旧会话没有这个字段时为 ``None``。
     """
 
     role: str
@@ -78,6 +79,7 @@ class Message:
     tool_calls: list[ToolCall] | None = None
     tool_call_id: str | None = None
     is_error: bool = False
+    created_at: float | None = None
 
 
 @dataclass
