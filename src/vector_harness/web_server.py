@@ -8,6 +8,7 @@ from __future__ import annotations
 import asyncio
 import json
 import mimetypes
+import shutil
 import threading
 from dataclasses import dataclass
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -219,6 +220,12 @@ def _route_api(
         return
     if method == "GET" and segments == ["api", "file"]:
         _send_file_meta(handler)
+        return
+    if method == "POST" and segments == ["api", "file", "rename"]:
+        _rename_file(handler)
+        return
+    if method == "DELETE" and segments == ["api", "file"]:
+        _delete_file(handler)
         return
     if method == "GET" and segments == ["api", "sessions"]:
         _send_json(
@@ -780,6 +787,85 @@ def _send_file_bytes(handler: BaseHTTPRequestHandler) -> None:
         "application/octet-stream",
         (("Content-Disposition", disposition),),
     )
+
+
+def _entry_name(value: object) -> str | None:
+    """新名字只能是一个路径段。"""
+    if not isinstance(value, str) or value in {"", ".", ".."}:
+        return None
+    if "/" in value or "\\" in value:
+        return None
+    return value
+
+
+def _rename_file(handler: BaseHTTPRequestHandler) -> None:
+    payload = _object_body(_read_body(handler))
+    if payload is None:
+        _send_json(handler, 400, {"error": "bad_name"})
+        return
+    raw = payload.get("path")
+    name = _entry_name(payload.get("name"))
+    if not isinstance(raw, str) or raw.strip() == "" or name is None:
+        _send_json(handler, 400, {"error": "bad_name"})
+        return
+    source = Path(raw).expanduser()
+    try:
+        present = source.is_symlink() or source.exists()
+    except OSError:
+        present = False
+    if not present:
+        _send_json(handler, 404, {"error": "not_found"})
+        return
+    destination = source.parent / name
+    try:
+        taken = destination.exists() or destination.is_symlink()
+    except OSError:
+        taken = True
+    if taken:
+        _send_json(handler, 409, {"error": "exists"})
+        return
+    try:
+        source.replace(destination)
+    except OSError:
+        _send_json(handler, 404, {"error": "not_found"})
+        return
+    _send_json(handler, 200, {"path": str(destination), "name": destination.name})
+
+
+def _delete_file(handler: BaseHTTPRequestHandler) -> None:
+    payload = _object_body(_read_body(handler))
+    raw = None if payload is None else payload.get("path")
+    if not isinstance(raw, str) or raw.strip() == "":
+        _send_json(handler, 404, {"error": "not_found"})
+        return
+    source = Path(raw).expanduser()
+    try:
+        if source.is_symlink():
+            source.unlink()
+            _send_json(handler, 200, {"ok": True})
+            return
+        resolved = source.resolve()
+    except OSError:
+        _send_json(handler, 404, {"error": "not_found"})
+        return
+    if not resolved.exists():
+        _send_json(handler, 404, {"error": "not_found"})
+        return
+    if resolved.parent == resolved:
+        _send_json(handler, 400, {"error": "bad_path"})
+        return
+    try:
+        if resolved.is_dir():
+            shutil.rmtree(resolved)
+        elif resolved.is_file():
+            resolved.unlink()
+        else:
+            _send_json(handler, 404, {"error": "not_found"})
+            return
+    except OSError:
+        _send_json(handler, 404, {"error": "not_found"})
+        return
+    _send_json(handler, 200, {"ok": True})
 
 
 def _send_json(handler: BaseHTTPRequestHandler, status: int, payload: object) -> None:

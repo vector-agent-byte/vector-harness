@@ -820,3 +820,68 @@ def test_directory_and_other_file_are_not_preview_bytes(tmp_path: Path):
             assert missing.status_code == 404
     finally:
         server.shutdown()
+
+
+def test_rename_rejects_unsafe_names_and_moves_a_file(tmp_path: Path):
+    source = tmp_path / "old.txt"
+    source.write_text("x", encoding="utf-8")
+    server = WebServer(WebSettings(workspace=tmp_path), provider=object())
+    server.start()
+    try:
+        base = f"http://127.0.0.1:{server.port}"
+        with httpx.Client(trust_env=False) as client:
+            for name in ("../x", "a/b", "a\\b", "", ".", ".."):
+                rejected = client.post(f"{base}/api/file/rename", json={"path": str(source), "name": name})
+                assert rejected.status_code == 400
+                assert rejected.json() == {"error": "bad_name"}
+            assert source.is_file()
+            moved = client.post(f"{base}/api/file/rename", json={"path": str(source), "name": "new.txt"})
+            assert moved.status_code == 200
+            assert moved.json()["name"] == "new.txt"
+            assert (tmp_path / "new.txt").read_text(encoding="utf-8") == "x"
+            nested = tmp_path / "nested"
+            nested.mkdir()
+            renamed_dir = client.post(f"{base}/api/file/rename", json={"path": str(nested), "name": "moved"})
+            assert renamed_dir.status_code == 200
+            assert (tmp_path / "moved").is_dir()
+            again = client.post(
+                f"{base}/api/file/rename",
+                json={"path": str(tmp_path / "new.txt"), "name": "new.txt"},
+            )
+            assert again.status_code == 409
+    finally:
+        server.shutdown()
+
+
+def test_delete_tree_symlink_and_root(tmp_path: Path):
+    folder = tmp_path / "folder"
+    folder.mkdir()
+    (folder / "inside.txt").write_text("x", encoding="utf-8")
+    target = tmp_path / "target"
+    target.mkdir()
+    (target / "keep.txt").write_text("keep", encoding="utf-8")
+    link = tmp_path / "link"
+    link_ready = True
+    try:
+        link.symlink_to(target, target_is_directory=True)
+    except OSError:
+        link_ready = False
+    server = WebServer(WebSettings(workspace=tmp_path), provider=object())
+    server.start()
+    try:
+        base = f"http://127.0.0.1:{server.port}"
+        with httpx.Client(trust_env=False) as client:
+            if link_ready:
+                removed_link = client.request("DELETE", f"{base}/api/file", json={"path": str(link)})
+                assert removed_link.status_code == 200
+                assert not link.exists()
+                assert (target / "keep.txt").read_text(encoding="utf-8") == "keep"
+            removed = client.request("DELETE", f"{base}/api/file", json={"path": str(folder)})
+            assert removed.status_code == 200
+            assert not folder.exists()
+            root = client.request("DELETE", f"{base}/api/file", json={"path": str(Path(tmp_path.anchor))})
+            assert root.status_code == 400
+            assert root.json() == {"error": "bad_path"}
+            assert Path(tmp_path.anchor).exists()
+    finally:
+        server.shutdown()
