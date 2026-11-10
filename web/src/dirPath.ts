@@ -15,6 +15,11 @@ export function refreshMayReplaceDraft(pickerOpen: boolean): boolean {
   return !pickerOpen
 }
 
+export function entryMenu(kind: "file" | "dir"): string[] {
+  if (kind === "dir") return ["重命名", "删除"]
+  return ["查看", "重命名", "下载", "删除"]
+}
+
 function parentPath(path: string): string | null {
   const trimmed = path.trim().replace(/[\\/]+$/, "")
   if (trimmed === "" || /^[A-Za-z]:$/.test(trimmed)) return null

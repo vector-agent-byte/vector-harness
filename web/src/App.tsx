@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react"
 import type { FormEvent, KeyboardEvent, MouseEvent } from "react"
 import ReactMarkdown from "react-markdown"
 import remarkGfm from "remark-gfm"
-import { findListableDir, listingIsCurrent, refreshMayReplaceDraft, REFRESH_MS, shouldShowPicker } from "./dirPath.ts"
+import { entryMenu as entryMenuLabels, findListableDir, listingIsCurrent, refreshMayReplaceDraft, REFRESH_MS, shouldShowPicker } from "./dirPath.ts"
 import "./App.css"
 
 function Markdown({ text }: { text: string }) {
@@ -228,6 +228,28 @@ function formatDuration(ms: number): string {
   return `${minutes}分${String(seconds).padStart(2, "0")}秒`
 }
 
+type EntryKind = "file" | "dir"
+
+type EntryMenu = {
+  kind: EntryKind
+  name: string
+  path: string
+  x: number
+  y: number
+}
+
+type FilePreview = {
+  name: string
+  path: string
+  kind: "text" | "image" | "too_large" | "unsupported"
+  text: string
+}
+
+type NamedPath = {
+  name: string
+  path: string
+}
+
 type SessionMenu = {
   id: string
   x: number
@@ -256,6 +278,11 @@ function viewedPath(root: string, current: string): string {
 function errorLabel(code: string): string {
   if (code === "busy") return "正在运行"
   if (code === "not_a_directory") return "不是文件夹"
+  if (code === "not_a_file") return "不是文件"
+  if (code === "bad_name") return "名字不合法"
+  if (code === "exists") return "已经有同名项"
+  if (code === "not_found") return "没有找到"
+  if (code === "bad_path") return "不能改这个位置"
   if (code === "unknown_skill") return "没有这个技能"
   return code
 }
@@ -343,6 +370,10 @@ export default function App() {
   const [skillOpen, setSkillOpen] = useState(false)
   const [now, setNow] = useState(() => Date.now())
   const [sessionMenu, setSessionMenu] = useState<SessionMenu | null>(null)
+  const [entryMenu, setEntryMenu] = useState<EntryMenu | null>(null)
+  const [preview, setPreview] = useState<FilePreview | null>(null)
+  const [renameTarget, setRenameTarget] = useState<(NamedPath & { draft: string }) | null>(null)
+  const [deleteTarget, setDeleteTarget] = useState<NamedPath | null>(null)
   const [propsId, setPropsId] = useState<string | null>(null)
 
   const openIdRef = useRef<string | null>(null)
@@ -354,6 +385,7 @@ export default function App() {
   const cacheRef = useRef(new Map<string, ChatMessage[]>())
   const bottomRef = useRef<HTMLDivElement | null>(null)
   const menuRef = useRef<HTMLDivElement | null>(null)
+  const entryMenuRef = useRef<HTMLDivElement | null>(null)
   const viewedPathRef = useRef("")
   const pickerOpenRef = useRef(false)
   const workdirRef = useRef("")
@@ -518,6 +550,24 @@ export default function App() {
   }, [sessionMenu])
 
   useEffect(() => {
+    if (entryMenu === null) return
+    function onPointerDown(event: PointerEvent) {
+      const target = event.target
+      if (target instanceof Node && entryMenuRef.current?.contains(target)) return
+      setEntryMenu(null)
+    }
+    function onKey(event: globalThis.KeyboardEvent) {
+      if (event.key === "Escape") setEntryMenu(null)
+    }
+    window.addEventListener("pointerdown", onPointerDown)
+    window.addEventListener("keydown", onKey)
+    return () => {
+      window.removeEventListener("pointerdown", onPointerDown)
+      window.removeEventListener("keydown", onKey)
+    }
+  }, [entryMenu])
+
+  useEffect(() => {
     if (runningId === null) return
     const timer = window.setInterval(() => setNow(Date.now()), 1000)
     return () => window.clearInterval(timer)
@@ -602,6 +652,112 @@ export default function App() {
     const path = viewedPathRef.current || workdirRef.current
     if (path === "") return
     void loadDirs(path, "view", refreshMayReplaceDraft(pickerOpenRef.current))
+  }
+
+  function openEntryMenu(event: MouseEvent<HTMLElement>, kind: EntryKind, name: string, path: string) {
+    event.preventDefault()
+    event.stopPropagation()
+    const labels = entryMenuLabels(kind)
+    const width = 140
+    const height = labels.length * 32 + 12
+    setEntryMenu({
+      kind,
+      name,
+      path,
+      x: Math.max(8, Math.min(event.clientX, window.innerWidth - width - 8)),
+      y: Math.max(8, Math.min(event.clientY, window.innerHeight - height - 8)),
+    })
+  }
+
+  async function openPreview(path: string, name: string) {
+    setEntryMenu(null)
+    try {
+      const response = await fetch(`/api/file?path=${encodeURIComponent(path)}`, { cache: "no-store" })
+      if (!response.ok) {
+        if (response.status >= 400 && response.status < 500) setErrorText(await readError(response))
+        return
+      }
+      const body = (await response.json()) as { kind?: unknown; text?: unknown }
+      const kind = body.kind
+      if (kind !== "text" && kind !== "image" && kind !== "too_large" && kind !== "unsupported") return
+      setPreview({
+        name,
+        path,
+        kind,
+        text: typeof body.text === "string" ? body.text : "",
+      })
+    } catch {
+      setErrorText("bad_request")
+    }
+  }
+
+  function downloadEntry(path: string) {
+    setEntryMenu(null)
+    const link = document.createElement("a")
+    link.href = `/api/file/bytes?path=${encodeURIComponent(path)}`
+    document.body.append(link)
+    link.click()
+    link.remove()
+  }
+
+  async function submitRename() {
+    if (renameTarget === null) return
+    try {
+      const response = await fetch("/api/file/rename", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ path: renameTarget.path, name: renameTarget.draft }),
+      })
+      if (!response.ok) {
+        if (response.status >= 400 && response.status < 500) setErrorText(await readError(response))
+        return
+      }
+      setRenameTarget(null)
+      setErrorText(null)
+      refreshListing()
+    } catch {
+      setErrorText("bad_request")
+    }
+  }
+
+  async function confirmDelete() {
+    if (deleteTarget === null) return
+    try {
+      const response = await fetch("/api/file", {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ path: deleteTarget.path }),
+      })
+      if (!response.ok) {
+        if (response.status >= 400 && response.status < 500) setErrorText(await readError(response))
+        return
+      }
+      setDeleteTarget(null)
+      setErrorText(null)
+      refreshListing()
+    } catch {
+      setErrorText("bad_request")
+    }
+  }
+
+  function chooseEntryAction(label: string, menu: EntryMenu) {
+    if (label === "查看") {
+      void openPreview(menu.path, menu.name)
+      return
+    }
+    if (label === "下载") {
+      downloadEntry(menu.path)
+      return
+    }
+    if (label === "重命名") {
+      setEntryMenu(null)
+      setRenameTarget({ name: menu.name, path: menu.path, draft: menu.name })
+      return
+    }
+    if (label === "删除") {
+      setEntryMenu(null)
+      setDeleteTarget({ name: menu.name, path: menu.path })
+    }
   }
 
   async function openPicker() {
@@ -1166,14 +1322,24 @@ export default function App() {
             ) : null}
             {browse.dirs.map((dir) => (
               <li key={dir.path} className="is-dir">
-                <button type="button" onClick={() => void loadDirs(dir.path)}>
+                <button
+                  type="button"
+                  onClick={() => void loadDirs(dir.path)}
+                  onContextMenu={(event) => openEntryMenu(event, "dir", dir.name, dir.path)}
+                >
                   {dir.name}
                 </button>
               </li>
             ))}
             {browse.files.map((file) => (
               <li key={file.path} className="is-file">
-                <span>{file.name}</span>
+                <button
+                  type="button"
+                  onClick={() => void openPreview(file.path, file.name)}
+                  onContextMenu={(event) => openEntryMenu(event, "file", file.name, file.path)}
+                >
+                  {file.name}
+                </button>
               </li>
             ))}
             {browse.dirs.length === 0 && browse.files.length === 0 ? (
@@ -1239,6 +1405,99 @@ export default function App() {
                 }}
               >
                 使用此目录
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+      {entryMenu ? (
+        <div
+          ref={entryMenuRef}
+          className="session-menu"
+          role="menu"
+          style={{ left: entryMenu.x, top: entryMenu.y }}
+        >
+          {entryMenuLabels(entryMenu.kind).map((label) => (
+            <button key={label} type="button" role="menuitem" onClick={() => chooseEntryAction(label, entryMenu)}>
+              {label}
+            </button>
+          ))}
+        </div>
+      ) : null}
+      {preview ? (
+        <div className="props-backdrop" onClick={() => setPreview(null)}>
+          <div
+            className="picker-dialog file-preview"
+            role="dialog"
+            aria-label="查看文件"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <div className="props-heading">{preview.name}</div>
+            {preview.kind === "text" ? <pre className="preview-text">{preview.text}</pre> : null}
+            {preview.kind === "image" ? (
+              <img
+                className="preview-image"
+                alt={preview.name}
+                src={`/api/file/bytes?path=${encodeURIComponent(preview.path)}&inline=1`}
+              />
+            ) : null}
+            {preview.kind === "too_large" ? <p className="picker-error">这个文件超过 2MB，不能预览</p> : null}
+            {preview.kind === "unsupported" ? <p className="picker-error">这个文件不能预览</p> : null}
+            <div className="dir-actions">
+              <button type="button" onClick={() => setPreview(null)}>
+                取消
+              </button>
+              <button type="button" onClick={() => downloadEntry(preview.path)}>
+                下载
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+      {renameTarget ? (
+        <div className="props-backdrop" onClick={() => setRenameTarget(null)}>
+          <form
+            className="picker-dialog"
+            aria-label="重命名"
+            onClick={(event) => event.stopPropagation()}
+            onSubmit={(event) => {
+              event.preventDefault()
+              void submitRename()
+            }}
+          >
+            <div className="props-heading">重命名</div>
+            <input
+              className="rename-input"
+              aria-label="新名称"
+              value={renameTarget.draft}
+              onChange={(event) =>
+                setRenameTarget((current) => (current ? { ...current, draft: event.target.value } : current))
+              }
+            />
+            <div className="dir-actions">
+              <button type="button" onClick={() => setRenameTarget(null)}>
+                取消
+              </button>
+              <button type="submit">确定</button>
+            </div>
+          </form>
+        </div>
+      ) : null}
+      {deleteTarget ? (
+        <div className="props-backdrop" onClick={() => setDeleteTarget(null)}>
+          <div
+            className="picker-dialog"
+            role="dialog"
+            aria-label="删除"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <div className="props-heading">删除 {deleteTarget.name}？</div>
+            <div className="dir-actions">
+              <button type="button" onClick={() => setDeleteTarget(null)}>
+                取消
+              </button>
+              <button type="button" onClick={() => void confirmDelete()}>
+                删除
               </button>
             </div>
           </div>

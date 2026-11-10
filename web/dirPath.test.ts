@@ -44,3 +44,9 @@ test("a late listing does not replace another folder, and an open picker keeps i
   assert.equal(refreshMayReplaceDraft(false), true)
   assert.equal(REFRESH_MS, 3000)
 })
+
+test("file and directory context menus stay distinct", async () => {
+  const { entryMenu } = await import("./src/dirPath.ts")
+  assert.deepEqual(entryMenu("file"), ["查看", "重命名", "下载", "删除"])
+  assert.deepEqual(entryMenu("dir"), ["重命名", "删除"])
+})
