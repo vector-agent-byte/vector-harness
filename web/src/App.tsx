@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react"
 import type { CSSProperties, FormEvent, KeyboardEvent, MouseEvent, PointerEvent as ReactPointerEvent } from "react"
 import ReactMarkdown from "react-markdown"
 import remarkGfm from "remark-gfm"
-import { entryMenu as entryMenuLabels, findListableDir, highlightCode, listingIsCurrent, refreshMayReplaceDraft, REFRESH_MS, shouldShowPicker } from "./dirPath.ts"
+import { entryMenu as entryMenuLabels, findListableDir, highlightCode, listingGenerationIsCurrent, refreshMayReplaceDraft, REFRESH_MS, shouldShowPicker, viewedPathAfter } from "./dirPath.ts"
 import "./App.css"
 
 function Markdown({ text }: { text: string }) {
@@ -283,6 +283,8 @@ function errorLabel(code: string): string {
   if (code === "exists") return "已经有同名项"
   if (code === "not_found") return "没有找到"
   if (code === "bad_path") return "不能改这个位置"
+  if (code === "delete_failed") return "删除没有完成"
+  if (code === "rename_failed") return "重命名没有完成"
   if (code === "unknown_skill") return "没有这个技能"
   return code
 }
@@ -411,6 +413,7 @@ export default function App() {
   const menuRef = useRef<HTMLDivElement | null>(null)
   const entryMenuRef = useRef<HTMLDivElement | null>(null)
   const viewedPathRef = useRef("")
+  const viewGenerationRef = useRef(0)
   const pickerOpenRef = useRef(false)
   const workdirRef = useRef("")
   messagesRef.current = messages
@@ -470,14 +473,14 @@ export default function App() {
     target: "view" | "picker" = "view",
     replaceDraft = true,
   ): Promise<DirListing | null> => {
-    if (target === "view") viewedPathRef.current = path
+    const generation = target === "view" ? (viewGenerationRef.current += 1) : 0
     const query = path === "" ? "" : `?path=${encodeURIComponent(path)}`
     try {
       const response = await fetch(`/api/dirs${query}`, { cache: "no-store" })
       if (!response.ok) {
         const code = response.status >= 400 && response.status < 500 ? await readError(response) : "bad_request"
         if (target === "picker") setPickerError(errorLabel(code))
-        else setErrorText(code)
+        else if (listingGenerationIsCurrent(generation, viewGenerationRef.current)) setErrorText(code)
         return null
       }
       const listing = parseDirs(await response.json())
@@ -488,13 +491,15 @@ export default function App() {
         setPathDraft(listing.path)
         return listing
       }
-      if (!listingIsCurrent(path, viewedPathRef.current)) return null
-      viewedPathRef.current = listing.path
+      if (!listingGenerationIsCurrent(generation, viewGenerationRef.current)) return null
+      viewedPathRef.current = viewedPathAfter(viewedPathRef.current, listing.path)
       setBrowse(listing)
       if (replaceDraft && refreshMayReplaceDraft(pickerOpenRef.current)) setPathDraft(listing.path)
       return listing
     } catch {
-      setErrorText("bad_request")
+      if (target !== "picker" && listingGenerationIsCurrent(generation, viewGenerationRef.current)) {
+        setErrorText("bad_request")
+      }
       return null
     }
   }, [])
@@ -900,7 +905,7 @@ export default function App() {
         body: JSON.stringify({ path: renameTarget.path, name: renameTarget.draft }),
       })
       if (!response.ok) {
-        if (response.status >= 400 && response.status < 500) setErrorText(await readError(response))
+        setErrorText(await readError(response))
         return
       }
       setRenameTarget(null)
@@ -920,7 +925,7 @@ export default function App() {
         body: JSON.stringify({ path: deleteTarget.path }),
       })
       if (!response.ok) {
-        if (response.status >= 400 && response.status < 500) setErrorText(await readError(response))
+        setErrorText(await readError(response))
         return
       }
       setDeleteTarget(null)
@@ -952,6 +957,7 @@ export default function App() {
   }
 
   async function openPicker() {
+    pickerOpenRef.current = true
     setPickerOpen(true)
     setPickerError(null)
     setSkillOpen(false)

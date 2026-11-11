@@ -1,6 +1,8 @@
 import asyncio
+import os
 import socket
 import struct
+import subprocess
 import sys
 import threading
 import time
@@ -849,6 +851,14 @@ def test_rename_rejects_unsafe_names_and_moves_a_file(tmp_path: Path):
                 json={"path": str(tmp_path / "new.txt"), "name": "new.txt"},
             )
             assert again.status_code == 409
+            for name in ("C:evil.txt", "foo:bar", "....", ".. "):
+                escaped = client.post(
+                    f"{base}/api/file/rename",
+                    json={"path": str(tmp_path / "new.txt"), "name": name},
+                )
+                assert escaped.status_code == 400
+                assert escaped.json() == {"error": "bad_name"}
+            assert (tmp_path / "new.txt").is_file()
     finally:
         server.shutdown()
 
@@ -883,5 +893,98 @@ def test_delete_tree_symlink_and_root(tmp_path: Path):
             assert root.status_code == 400
             assert root.json() == {"error": "bad_path"}
             assert Path(tmp_path.anchor).exists()
+    finally:
+        server.shutdown()
+
+
+def _make_directory_link(link: Path, target: Path) -> None:
+    if os.name == "nt":
+        completed = subprocess.run(
+            ["cmd", "/c", "mklink", "/J", str(link), str(target)],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        if completed.returncode != 0:
+            pytest.skip(completed.stderr.strip() or completed.stdout.strip() or "mklink failed")
+        return
+    try:
+        link.symlink_to(target, target_is_directory=True)
+    except OSError as exc:
+        pytest.skip(str(exc))
+
+
+def test_listed_directory_link_does_not_follow_on_delete_or_rename(tmp_path: Path):
+    target = tmp_path / "target"
+    target.mkdir()
+    (target / "keep.txt").write_text("keep", encoding="utf-8")
+    link = tmp_path / "link"
+    other = tmp_path / "other"
+    _make_directory_link(link, target)
+    _make_directory_link(other, target)
+    server = WebServer(WebSettings(workspace=tmp_path), provider=object())
+    server.start()
+    try:
+        base = f"http://127.0.0.1:{server.port}"
+        with httpx.Client(trust_env=False) as client:
+            listing = client.get(f"{base}/api/dirs", params={"path": str(tmp_path)})
+            assert listing.status_code == 200
+            by_name = {item["name"]: item["path"] for item in listing.json()["dirs"]}
+            assert Path(by_name["link"]) == link
+            assert Path(by_name["other"]) == other
+            removed = client.request("DELETE", f"{base}/api/file", json={"path": by_name["link"]})
+            assert removed.status_code == 200
+            assert not link.exists()
+            assert (target / "keep.txt").read_text(encoding="utf-8") == "keep"
+            renamed = client.post(
+                f"{base}/api/file/rename",
+                json={"path": by_name["other"], "name": "renamed-link"},
+            )
+            assert renamed.status_code == 200
+            assert (tmp_path / "renamed-link").exists()
+            assert target.is_dir()
+            assert (target / "keep.txt").is_file()
+    finally:
+        server.shutdown()
+
+
+def test_case_only_rename_keeps_the_file(tmp_path: Path):
+    source = tmp_path / "Old.txt"
+    source.write_text("x", encoding="utf-8")
+    server = WebServer(WebSettings(workspace=tmp_path), provider=object())
+    server.start()
+    try:
+        base = f"http://127.0.0.1:{server.port}"
+        with httpx.Client(trust_env=False) as client:
+            changed = client.post(f"{base}/api/file/rename", json={"path": str(source), "name": "old.txt"})
+            if os.name == "nt":
+                assert changed.status_code == 200
+                assert (tmp_path / "old.txt").read_text(encoding="utf-8") == "x"
+            else:
+                assert changed.status_code == 200
+                assert (tmp_path / "old.txt").read_text(encoding="utf-8") == "x"
+                assert source.is_file()
+    finally:
+        server.shutdown()
+
+
+def test_failed_tree_delete_is_not_reported_as_missing(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    folder = tmp_path / "folder"
+    folder.mkdir()
+    (folder / "inside.txt").write_text("x", encoding="utf-8")
+
+    def locked(path: Path) -> None:
+        raise OSError("locked")
+
+    monkeypatch.setattr("vector_harness.web_server.shutil.rmtree", locked)
+    server = WebServer(WebSettings(workspace=tmp_path), provider=object())
+    server.start()
+    try:
+        base = f"http://127.0.0.1:{server.port}"
+        with httpx.Client(trust_env=False) as client:
+            removed = client.request("DELETE", f"{base}/api/file", json={"path": str(folder)})
+            assert removed.status_code == 500
+            assert removed.json() == {"error": "delete_failed"}
+            assert (folder / "inside.txt").is_file()
     finally:
         server.shutdown()

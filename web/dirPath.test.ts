@@ -45,6 +45,14 @@ test("a late listing does not replace another folder, and an open picker keeps i
   assert.equal(REFRESH_MS, 3000)
 })
 
+test("an older listing is dropped, and a failed open keeps the loaded folder", async () => {
+  const { listingGenerationIsCurrent, viewedPathAfter } = await import("./src/dirPath.ts")
+  assert.equal(listingGenerationIsCurrent(2, 2), true)
+  assert.equal(listingGenerationIsCurrent(1, 2), false)
+  assert.equal(viewedPathAfter("D:\\shown", null), "D:\\shown")
+  assert.equal(viewedPathAfter("D:\\shown", "D:\\opened"), "D:\\opened")
+})
+
 test("file and directory context menus stay distinct", async () => {
   const { entryMenu } = await import("./src/dirPath.ts")
   assert.deepEqual(entryMenu("file"), ["查看", "重命名", "下载", "删除"])

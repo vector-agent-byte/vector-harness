@@ -8,6 +8,7 @@ from __future__ import annotations
 import asyncio
 import json
 import mimetypes
+import os
 import shutil
 import threading
 from dataclasses import dataclass
@@ -580,7 +581,7 @@ def _dir_listing(path: Path) -> dict | None:
         if child.name.startswith("."):
             continue
         try:
-            entry = {"name": child.name, "path": str(child.resolve())}
+            entry = {"name": child.name, "path": str(child)}
             if child.is_dir():
                 dirs.append(entry)
             elif child.is_file():
@@ -774,16 +775,10 @@ def _send_file_bytes(handler: BaseHTTPRequestHandler) -> None:
             return
         _send_bytes(handler, 200, body, str(info["media_type"]))
         return
-    try:
-        body = resolved.read_bytes()
-    except OSError:
-        _send_json(handler, 404, {"error": "not_found"})
-        return
     disposition = f"attachment; filename*=UTF-8''{quote(resolved.name)}"
-    _send_bytes(
+    _stream_file(
         handler,
-        200,
-        body,
+        resolved,
         "application/octet-stream",
         (("Content-Disposition", disposition),),
     )
@@ -791,11 +786,51 @@ def _send_file_bytes(handler: BaseHTTPRequestHandler) -> None:
 
 def _entry_name(value: object) -> str | None:
     """新名字只能是一个路径段。"""
-    if not isinstance(value, str) or value in {"", ".", ".."}:
+    if not isinstance(value, str) or value.strip() in {"", ".", ".."}:
         return None
-    if "/" in value or "\\" in value:
+    if any(char in value for char in "/\\:"):
         return None
     return value
+
+
+def _is_junction(path: Path) -> bool:
+    checker = getattr(path, "is_junction", None)
+    if checker is None:
+        return False
+    try:
+        return bool(checker())
+    except OSError:
+        return False
+
+
+def _is_directory_link(path: Path) -> bool:
+    if _is_junction(path):
+        return True
+    try:
+        return path.is_symlink() and path.is_dir()
+    except OSError:
+        return False
+
+
+def _remove_link(path: Path) -> None:
+    """只去掉链接本身。目录链接用 rmdir，避免沿链接删掉目标。"""
+    if _is_directory_link(path) and os.name == "nt":
+        path.rmdir()
+        return
+    path.unlink()
+
+
+def _rename_leaves_parent(source: Path, name: str, destination: Path) -> bool:
+    if destination.name != name:
+        return False
+    if os.path.normcase(str(destination.parent)) != os.path.normcase(str(source.parent)):
+        return False
+    try:
+        resolved = destination.resolve()
+        parent = source.parent.resolve()
+    except OSError:
+        return False
+    return resolved != parent
 
 
 def _rename_file(handler: BaseHTTPRequestHandler) -> None:
@@ -817,17 +852,22 @@ def _rename_file(handler: BaseHTTPRequestHandler) -> None:
         _send_json(handler, 404, {"error": "not_found"})
         return
     destination = source.parent / name
+    if not _rename_leaves_parent(source, name, destination):
+        _send_json(handler, 400, {"error": "bad_name"})
+        return
     try:
         taken = destination.exists() or destination.is_symlink()
+        same_file = taken and source.samefile(destination)
     except OSError:
         taken = True
-    if taken:
+        same_file = False
+    if taken and not (same_file and source.name != destination.name):
         _send_json(handler, 409, {"error": "exists"})
         return
     try:
         source.replace(destination)
     except OSError:
-        _send_json(handler, 404, {"error": "not_found"})
+        _send_json(handler, 500, {"error": "rename_failed"})
         return
     _send_json(handler, 200, {"path": str(destination), "name": destination.name})
 
@@ -840,10 +880,18 @@ def _delete_file(handler: BaseHTTPRequestHandler) -> None:
         return
     source = Path(raw).expanduser()
     try:
-        if source.is_symlink():
-            source.unlink()
-            _send_json(handler, 200, {"ok": True})
+        linked = source.is_symlink() or _is_junction(source)
+    except OSError:
+        linked = False
+    if linked:
+        try:
+            _remove_link(source)
+        except OSError:
+            _send_json(handler, 500, {"error": "delete_failed"})
             return
+        _send_json(handler, 200, {"ok": True})
+        return
+    try:
         resolved = source.resolve()
     except OSError:
         _send_json(handler, 404, {"error": "not_found"})
@@ -863,9 +911,37 @@ def _delete_file(handler: BaseHTTPRequestHandler) -> None:
             _send_json(handler, 404, {"error": "not_found"})
             return
     except OSError:
-        _send_json(handler, 404, {"error": "not_found"})
+        _send_json(handler, 500, {"error": "delete_failed"})
         return
     _send_json(handler, 200, {"ok": True})
+
+
+def _stream_file(
+    handler: BaseHTTPRequestHandler,
+    path: Path,
+    content_type: str,
+    headers: tuple[tuple[str, str], ...] = (),
+) -> None:
+    try:
+        size = path.stat().st_size
+        handle = path.open("rb")
+    except OSError:
+        _send_json(handler, 404, {"error": "not_found"})
+        return
+    try:
+        handler.send_response(200)
+        handler.send_header("Content-Type", content_type)
+        handler.send_header("Content-Length", str(size))
+        for name, value in headers:
+            handler.send_header(name, value)
+        handler.end_headers()
+        while True:
+            chunk = handle.read(64 * 1024)
+            if not chunk:
+                break
+            handler.wfile.write(chunk)
+    finally:
+        handle.close()
 
 
 def _send_json(handler: BaseHTTPRequestHandler, status: int, payload: object) -> None:

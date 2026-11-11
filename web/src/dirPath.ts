@@ -11,6 +11,15 @@ export function listingIsCurrent(requested: string, current: string): boolean {
   return requested === current
 }
 
+export function listingGenerationIsCurrent(requestGeneration: number, latestGeneration: number): boolean {
+  return requestGeneration === latestGeneration
+}
+
+export function viewedPathAfter(previous: string, loaded: string | null): string {
+  if (loaded === null || loaded === "") return previous
+  return loaded
+}
+
 export function refreshMayReplaceDraft(pickerOpen: boolean): boolean {
   return !pickerOpen
 }
