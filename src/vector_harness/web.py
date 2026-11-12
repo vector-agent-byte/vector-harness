@@ -6,16 +6,13 @@
 from __future__ import annotations
 
 import argparse
-import os
 import socket
 import sys
 import webbrowser
 from collections.abc import Callable, Mapping
 from pathlib import Path
 
-from vector_harness.cli import _memory_path, merged_env
-from vector_harness.core.config import apply_config, default_config_path
-from vector_harness.core.provider import OpenAICompatibleProvider
+from vector_harness.bootstrap import load_provider, memory_path as _memory_path
 from vector_harness.types import ProviderError
 from vector_harness.web_server import WebServer, WebSettings
 
@@ -117,20 +114,13 @@ def main(
         if candidate.is_dir():
             skills_dir = candidate
     if provider is None:
-        env = merged_env(
-            os.environ if environ is None else environ,
-            model=args.model,
-            base_url=args.base_url,
-        )
         try:
-            env = apply_config(
-                env, default_config_path() if config_file is None else config_file
+            provider = load_provider(
+                environ=environ,
+                config_file=config_file,
+                model=args.model,
+                base_url=args.base_url,
             )
-        except ProviderError as exc:
-            print(str(exc), file=sys.stderr)
-            return 1
-        try:
-            provider = OpenAICompatibleProvider.from_env(env)
         except ProviderError as exc:
             print(str(exc), file=sys.stderr)
             return 1

@@ -187,7 +187,7 @@ def test_config_file_supplies_connection_settings(tmp_path: Path, monkeypatch):
         return ScriptedProvider(turns=[ScriptedTurn(content="ok")])
 
     monkeypatch.setattr(
-        "vector_harness.cli.OpenAICompatibleProvider.from_env", fake_from_env
+        "vector_harness.bootstrap.OpenAICompatibleProvider.from_env", fake_from_env
     )
     workspace = tmp_path / "ws"
     workspace.mkdir()
@@ -216,7 +216,7 @@ def test_env_and_cli_override_config_file(tmp_path: Path, monkeypatch):
         return ScriptedProvider(turns=[ScriptedTurn(content="ok")])
 
     monkeypatch.setattr(
-        "vector_harness.cli.OpenAICompatibleProvider.from_env", fake_from_env
+        "vector_harness.bootstrap.OpenAICompatibleProvider.from_env", fake_from_env
     )
     workspace = tmp_path / "ws"
     workspace.mkdir()
@@ -342,7 +342,7 @@ def test_shell_command_is_printed_before_execute(tmp_path: Path, monkeypatch):
             seen["before"] = buffer.getvalue()
             return "ok"
 
-    monkeypatch.setattr("vector_harness.cli.Shell", ProbeShell)
+    monkeypatch.setattr("vector_harness.bootstrap.Shell", ProbeShell)
     provider = ScriptedProvider(
         turns=[
             ScriptedTurn(
@@ -596,7 +596,7 @@ def test_plan_and_child_events_reach_the_same_callback(tmp_path: Path, monkeypat
             saw_shell = True
             return "ok"
 
-    monkeypatch.setattr("vector_harness.cli.Shell", ProbeShell)
+    monkeypatch.setattr("vector_harness.bootstrap.Shell", ProbeShell)
     provider = ScriptedProvider(
         turns=[
             ScriptedTurn(

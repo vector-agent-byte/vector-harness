@@ -1,183 +1,52 @@
 import { useCallback, useEffect, useRef, useState } from "react"
 import type { CSSProperties, FormEvent, KeyboardEvent, MouseEvent, PointerEvent as ReactPointerEvent } from "react"
-import ReactMarkdown from "react-markdown"
-import remarkGfm from "remark-gfm"
 import { entryMenu as entryMenuLabels, findListableDir, highlightCode, listingGenerationIsCurrent, refreshMayReplaceDraft, REFRESH_MS, shouldShowPicker, viewedPathAfter } from "./dirPath.ts"
+import {
+  normalizeMessages,
+  parseDirs,
+  parseSessionList,
+  parseSkills,
+  readError,
+  readEventStream,
+} from "./api.ts"
+import {
+  clamp,
+  errorLabel,
+  formatClock,
+  formatDuration,
+  formatRelativeTime,
+  messageTimeLabel,
+  sessionProperties,
+  toolSummary,
+  userMessage,
+  userPreview,
+  viewedPath,
+} from "./format.ts"
+import {
+  Markdown,
+  ReflectionCard,
+  StatusNote,
+  ThinkingBlock,
+  TodoList,
+  TraceView,
+  parseReflection,
+} from "./components.tsx"
+import type {
+  ChatMessage,
+  DirListing,
+  EntryKind,
+  EntryMenu,
+  FilePreview,
+  LiveTurn,
+  NamedPath,
+  RunNote,
+  SessionItem,
+  SessionList,
+  SessionMenu,
+  SkillItem,
+  TodoItem,
+} from "./types.ts"
 import "./App.css"
-
-function Markdown({ text }: { text: string }) {
-  if (text === "") return null
-  return (
-    <div className="md">
-      <ReactMarkdown remarkPlugins={[remarkGfm]}>{text}</ReactMarkdown>
-    </div>
-  )
-}
-
-type TodoItem = { id?: string; content: string; status: string }
-
-function TodoList({ todos }: { todos: TodoItem[] }) {
-  const done = todos.filter((t) => t.status === "completed").length
-  const pct = todos.length > 0 ? Math.round((done / todos.length) * 100) : 0
-  return (
-    <div className="plan-card">
-      <div className="plan-header">
-        <span className="plan-label">计划</span>
-        <span className="plan-fraction">{done} / {todos.length}</span>
-        <div className="plan-bar-wrap">
-          <div className="plan-bar-fill" style={{ width: `${pct}%` }} />
-        </div>
-      </div>
-      <ul className="plan-list">
-        {todos.map((todo, i) => (
-          <li key={todo.id ?? i} className={`plan-item ${todo.status}`}>
-            <span className="plan-icon" aria-hidden="true">
-              {todo.status === "completed" ? "✓" : todo.status === "in_progress" ? "▶" : "○"}
-            </span>
-            <span className="plan-content">{todo.content}</span>
-          </li>
-        ))}
-      </ul>
-    </div>
-  )
-}
-
-function ReflectionCard({ pass, text }: { pass: boolean; text: string }) {
-  return (
-    <div className={`reflection-card ${pass ? "pass" : "fail"}`}>
-      <span className="reflection-verdict">{pass ? "反思通过" : "反思未通过"}</span>
-      {text ? <span className="reflection-text">{text}</span> : null}
-    </div>
-  )
-}
-
-function parseReflection(content: string): { pass: boolean; text: string } | null {
-  const m = content.match(/^\[Reflection\]\s*(通过|未通过)\s*[—-]\s*(.*)$/s)
-  if (!m) return null
-  return { pass: m[1] === "通过", text: m[2].trim() }
-}
-
-function ThinkingBlock({ text, streaming }: { text: string; streaming: boolean }) {
-  const [expanded, setExpanded] = useState(true)
-  const prevStreaming = useRef(streaming)
-  useEffect(() => {
-    if (prevStreaming.current && !streaming) setExpanded(false)
-    prevStreaming.current = streaming
-  }, [streaming])
-  return (
-    <div className="thinking-block">
-      <button
-        type="button"
-        className="thinking-toggle"
-        aria-expanded={expanded}
-        onClick={() => setExpanded((v) => !v)}
-      >
-        <span className="thinking-sparkle" aria-hidden="true">✦</span>
-        <span className="thinking-title">思考</span>
-        {streaming ? <span className="thinking-pulse" aria-hidden="true" /> : null}
-        <span className="thinking-chevron" aria-hidden="true">{expanded ? "▴" : "▾"}</span>
-      </button>
-      {expanded ? (
-        <div className="thinking-body">
-          <Markdown text={text} />
-        </div>
-      ) : null}
-    </div>
-  )
-}
-
-type StatusKind = "warn" | "error" | "neutral"
-
-const STATUS_CONFIG: Record<string, { icon: string; title: string; hint: string; kind: StatusKind }> = {
-  max_steps: { icon: "⚡", title: "已达步数上限", hint: "任务可能未完整执行，可继续输入指令", kind: "warn" },
-  error:     { icon: "✕", title: "模型请求失败", hint: "接口出错，请稍后重试或检查配置", kind: "error" },
-  stopped:   { icon: "◼", title: "已停止", hint: "任务已手动中止", kind: "neutral" },
-}
-
-function StatusNote({ status }: { status: string }) {
-  const cfg = STATUS_CONFIG[status] ?? { icon: "·", title: status, hint: "", kind: "neutral" as StatusKind }
-  return (
-    <div className={`status-note status-note-${cfg.kind}`}>
-      <span className="status-note-icon" aria-hidden="true">{cfg.icon}</span>
-      <div className="status-note-body">
-        <span className="status-note-title">{cfg.title}</span>
-        {cfg.hint ? <span className="status-note-hint">{cfg.hint}</span> : null}
-      </div>
-    </div>
-  )
-}
-
-type SessionItem = {
-  id: string
-  title: string
-  updated_at: number
-  skill: string | null
-  started_at: number | null
-  duration_ms: number | null
-}
-
-type SkillItem = {
-  name: string
-  description: string
-}
-
-type DirEntry = {
-  name: string
-  path: string
-}
-
-type DirListing = {
-  path: string
-  parent: string | null
-  dirs: DirEntry[]
-  files: DirEntry[]
-}
-
-type ToolCall = {
-  id: string
-  name: string
-  args: Record<string, unknown> | null
-}
-
-type ChatMessage = {
-  role: string
-  content: string
-  tool_calls: ToolCall[] | null
-  tool_call_id: string | null
-  is_error: boolean
-  created_at: number | null
-}
-
-type LiveTool = {
-  name: string
-  args: Record<string, unknown> | null
-}
-
-type LiveTurn = {
-  thinking: string
-  text: string
-  tools: LiveTool[]
-}
-
-type SessionList = {
-  sessions: SessionItem[]
-  running_id: string | null
-  model: string
-}
-
-type StreamEvent = {
-  kind?: unknown
-  text?: unknown
-  name?: unknown
-  status?: unknown
-  arguments?: unknown
-  tool_call_id?: unknown
-}
-
-type RunNote = {
-  id: string
-  status: string
-}
 
 const POLL_MS = 1000
 const OPEN_SESSION_KEY = "vector-open-session"
@@ -190,358 +59,6 @@ const MODES = [
 
 type ModeId = (typeof MODES)[number]["id"]
 
-function parseSessionList(value: unknown): SessionList | null {
-  if (!value || typeof value !== "object") return null
-  const record = value as Record<string, unknown>
-  if (!Array.isArray(record.sessions)) return null
-  if (record.running_id !== null && typeof record.running_id !== "string") return null
-  const sessions: SessionItem[] = []
-  for (const item of record.sessions) {
-    if (!item || typeof item !== "object") continue
-    const row = item as Record<string, unknown>
-    if (typeof row.id !== "string" || typeof row.title !== "string") continue
-    sessions.push({
-      id: row.id,
-      title: row.title,
-      updated_at: typeof row.updated_at === "number" ? row.updated_at : 0,
-      skill: typeof row.skill === "string" && row.skill !== "" ? row.skill : null,
-      started_at: typeof row.started_at === "number" ? row.started_at : null,
-      duration_ms: typeof row.duration_ms === "number" ? row.duration_ms : null,
-    })
-  }
-  const runningId = record.running_id
-  return {
-    sessions,
-    running_id: typeof runningId === "string" ? runningId : null,
-    model: typeof record.model === "string" ? record.model : "",
-  }
-}
-
-function normalizeTools(value: unknown): ToolCall[] | null {
-  if (value == null) return null
-  if (!Array.isArray(value)) return null
-  const tools: ToolCall[] = []
-  for (const item of value) {
-    if (!item || typeof item !== "object") continue
-    const record = item as Record<string, unknown>
-    tools.push({
-      id: typeof record.id === "string" ? record.id : "",
-      name: typeof record.name === "string" ? record.name : "",
-      args:
-        record.arguments && typeof record.arguments === "object"
-          ? (record.arguments as Record<string, unknown>)
-          : null,
-    })
-  }
-  return tools
-}
-
-function normalizeMessages(value: unknown): ChatMessage[] {
-  if (!Array.isArray(value)) return []
-  const messages: ChatMessage[] = []
-  for (const item of value) {
-    if (!item || typeof item !== "object") continue
-    const record = item as Record<string, unknown>
-    messages.push({
-      role: typeof record.role === "string" ? record.role : "",
-      content: typeof record.content === "string" ? record.content : "",
-      tool_calls: normalizeTools(record.tool_calls),
-      tool_call_id: typeof record.tool_call_id === "string" ? record.tool_call_id : null,
-      is_error: record.is_error === true,
-      created_at: typeof record.created_at === "number" ? record.created_at : null,
-    })
-  }
-  return messages
-}
-
-async function readError(response: Response): Promise<string> {
-  try {
-    const body = (await response.json()) as { error?: unknown }
-    if (typeof body.error === "string") return body.error
-  } catch {
-    // A 4xx without JSON still needs a visible error string.
-  }
-  return "bad_request"
-}
-
-function toolSummary(name: string, args: Record<string, unknown> | null): string | null {
-  if (!args) return null
-  if (name === "shell" && typeof args.command === "string") return args.command
-  if (typeof args.path === "string") return args.path
-  if (name === "submit_verdict") return args.pass === true ? "通过" : "未通过"
-  if (name === "update_todos" && Array.isArray(args.todos)) {
-    const todos = args.todos as Array<Record<string, unknown>>
-    const total = todos.length
-    const done = todos.filter((t) => t.status === "completed").length
-    return `${total} 项，${done} 完成`
-  }
-  const first = Object.values(args).find((v) => typeof v === "string")
-  return typeof first === "string" ? first : null
-}
-
-function parseEvent(block: string): StreamEvent | null {
-  const line = block
-    .split("\n")
-    .map((item) => item.trim())
-    .find((item) => item.startsWith("data:"))
-  if (!line) return null
-  try {
-    const value = JSON.parse(line.slice(5).trim()) as unknown
-    if (!value || typeof value !== "object") return null
-    return value as StreamEvent
-  } catch {
-    return null
-  }
-}
-
-async function readEventStream(
-  response: Response,
-  onEvent: (event: StreamEvent) => void,
-): Promise<{ completed: boolean; status: string | null }> {
-  const reader = response.body?.getReader()
-  if (!reader) return { completed: false, status: null }
-  const decoder = new TextDecoder()
-  let buffer = ""
-  let completed = false
-  let status: string | null = null
-
-  const applyBlock = (block: string) => {
-    const event = parseEvent(block)
-    if (!event || typeof event.kind !== "string") return
-    onEvent(event)
-    if (event.kind === "run_result") {
-      completed = true
-      status = typeof event.status === "string" ? event.status : ""
-    }
-  }
-
-  try {
-    while (true) {
-      const { done, value } = await reader.read()
-      if (done) break
-      buffer += decoder.decode(value, { stream: true })
-      const parts = buffer.split("\n\n")
-      buffer = parts.pop() ?? ""
-      for (const part of parts) applyBlock(part)
-    }
-    buffer += decoder.decode()
-    if (buffer.trim()) applyBlock(buffer)
-  } catch {
-    // Dropped before run_result: the caller polls instead of resending.
-  }
-  return { completed, status }
-}
-
-function formatClock(seconds: number): string {
-  const date = new Date(seconds * 1000)
-  const pad = (value: number) => String(value).padStart(2, "0")
-  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`
-}
-
-function formatRelativeTime(updatedAt: number): string {
-  const diffMs = Date.now() - updatedAt * 1000
-  const diffMins = Math.floor(diffMs / 60000)
-  if (diffMins < 1) return "刚刚"
-  if (diffMins < 60) return `${diffMins}分钟`
-  const diffHours = Math.floor(diffMins / 60)
-  if (diffHours < 24) return `${diffHours}小时`
-  const diffDays = Math.floor(diffHours / 24)
-  return `${diffDays}天`
-}
-
-function formatDuration(ms: number): string {
-  const safe = Math.max(0, Math.round(ms))
-  if (safe < 1000) return `${safe}毫秒`
-  const totalSeconds = Math.round(safe / 1000)
-  const minutes = Math.floor(totalSeconds / 60)
-  const seconds = totalSeconds % 60
-  if (minutes === 0) return `${seconds}秒`
-  return `${minutes}分${String(seconds).padStart(2, "0")}秒`
-}
-
-type EntryKind = "file" | "dir"
-
-type EntryMenu = {
-  kind: EntryKind
-  name: string
-  path: string
-  x: number
-  y: number
-}
-
-type FilePreview = {
-  name: string
-  path: string
-  kind: "text" | "image" | "too_large" | "unsupported"
-  text: string
-}
-
-type NamedPath = {
-  name: string
-  path: string
-}
-
-type SessionMenu = {
-  id: string
-  x: number
-  y: number
-}
-
-function sessionProperties(session: SessionItem, running: boolean, now: number) {
-  if (session.started_at === null) {
-    return { trigger: "还没有运行", duration: "还没有运行" }
-  }
-  const elapsed = running ? Math.max(0, now - session.started_at * 1000) : session.duration_ms
-  return {
-    trigger: formatClock(session.started_at),
-    duration: elapsed === null ? "还在运行" : formatDuration(elapsed),
-  }
-}
-
-function viewedPath(root: string, current: string): string {
-  const sep = current.includes("\\") ? "\\" : "/"
-  const prefix = root.replace(/[\\/]+$/, "") + sep
-  if (current.toLowerCase().startsWith(prefix.toLowerCase())) return current.slice(prefix.length)
-  const name = current.split(/[\\/]/).filter(Boolean).pop()
-  return name || current
-}
-
-function errorLabel(code: string): string {
-  if (code === "busy") return "正在运行"
-  if (code === "not_a_directory") return "不是文件夹"
-  if (code === "not_a_file") return "不是文件"
-  if (code === "bad_name") return "名字不合法"
-  if (code === "exists") return "已经有同名项"
-  if (code === "not_found") return "没有找到"
-  if (code === "bad_path") return "不能改这个位置"
-  if (code === "delete_failed") return "删除没有完成"
-  if (code === "rename_failed") return "重命名没有完成"
-  if (code === "unknown_skill") return "没有这个技能"
-  return code
-}
-
-function parseSkills(value: unknown): SkillItem[] {
-  if (!value || typeof value !== "object") return []
-  const record = value as Record<string, unknown>
-  if (!Array.isArray(record.skills)) return []
-  const skills: SkillItem[] = []
-  for (const item of record.skills) {
-    if (!item || typeof item !== "object") continue
-    const row = item as Record<string, unknown>
-    if (typeof row.name !== "string" || typeof row.description !== "string") continue
-    skills.push({ name: row.name, description: row.description })
-  }
-  return skills
-}
-
-function parseEntries(value: unknown): DirEntry[] {
-  if (!Array.isArray(value)) return []
-  const entries: DirEntry[] = []
-  for (const item of value) {
-    if (!item || typeof item !== "object") continue
-    const row = item as Record<string, unknown>
-    if (typeof row.name !== "string" || typeof row.path !== "string") continue
-    entries.push({ name: row.name, path: row.path })
-  }
-  return entries
-}
-
-function parseDirs(value: unknown): DirListing | null {
-  if (!value || typeof value !== "object") return null
-  const record = value as Record<string, unknown>
-  if (typeof record.path !== "string" || !Array.isArray(record.dirs)) return null
-  return {
-    path: record.path,
-    parent: typeof record.parent === "string" ? record.parent : null,
-    dirs: parseEntries(record.dirs),
-    files: parseEntries(record.files),
-  }
-}
-
-function clamp(value: number, min: number, max: number): number {
-  return Math.min(max, Math.max(min, value))
-}
-
-function userPreview(text: string): string {
-  const flat = text.replace(/\s+/g, " ").trim()
-  if (flat.length <= 72) return flat
-  return `${flat.slice(0, 72)}…`
-}
-
-function userMessage(text: string): ChatMessage {
-  return {
-    role: "user",
-    content: text,
-    tool_calls: null,
-    tool_call_id: null,
-    is_error: false,
-    created_at: Date.now() / 1000,
-  }
-}
-
-function messageTimeLabel(message: ChatMessage, sentAt: number | null): string | null {
-  if (message.created_at === null) return null
-  if (message.role !== "user" && message.role !== "assistant") return null
-  const clock = formatClock(message.created_at)
-  if (message.role === "assistant" && sentAt !== null) {
-    return `${clock} · 耗时 ${formatDuration((message.created_at - sentAt) * 1000)}`
-  }
-  return clock
-}
-
-type LiveTurnForTrace = { thinking: string; text: string; tools: { name: string; args: Record<string, unknown> | null }[] } | null
-
-function traceRoleLabel(role: string): string {
-  if (role === "user") return "用户"
-  if (role === "assistant") return "助手"
-  if (role === "tool") return "工具"
-  return role
-}
-
-function traceSnippet(msg: ChatMessage): string {
-  if (msg.tool_calls && msg.tool_calls.length > 0) {
-    return msg.tool_calls
-      .filter((c) => c.name)
-      .map((c) => {
-        const arg = c.args ? Object.entries(c.args).map(([k, v]) => `${k}=${String(v).slice(0, 40)}`).join(", ") : ""
-        return `${c.name}(${arg})`
-      })
-      .join(" · ")
-  }
-  return msg.content.replace(/\s+/g, " ").slice(0, 160)
-}
-
-function TraceView({ messages, live }: { messages: ChatMessage[]; live: LiveTurnForTrace }) {
-  const rows: Array<{ role: string; label: string; snippet: string; isError: boolean; isLive: boolean }> = []
-  for (const msg of messages) {
-    if (!msg.content && !msg.tool_calls?.length) continue
-    rows.push({
-      role: msg.role,
-      label: traceRoleLabel(msg.role),
-      snippet: traceSnippet(msg),
-      isError: msg.is_error,
-      isLive: false,
-    })
-  }
-  if (live) {
-    if (live.thinking) rows.push({ role: "thinking", label: "思考", snippet: live.thinking.replace(/\s+/g, " ").slice(0, 160), isError: false, isLive: true })
-    if (live.text) rows.push({ role: "assistant", label: "助手", snippet: live.text.replace(/\s+/g, " ").slice(0, 160), isError: false, isLive: true })
-    for (const tool of live.tools) {
-      if (tool.name) rows.push({ role: "tool", label: "工具", snippet: tool.name, isError: false, isLive: true })
-    }
-  }
-  return (
-    <div className="trace-view">
-      {rows.map((row, i) => (
-        <div key={i} className={`trace-row trace-${row.role}${row.isError ? " is-error" : ""}${row.isLive ? " is-live" : ""}`}>
-          <span className="trace-role">{row.label}</span>
-          <span className="trace-snippet">{row.snippet}</span>
-        </div>
-      ))}
-      {rows.length === 0 ? <div className="trace-empty">暂无轨迹</div> : null}
-    </div>
-  )
-}
 
 export default function App() {
   const [sessions, setSessions] = useState<SessionItem[]>([])

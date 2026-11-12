@@ -2,87 +2,31 @@ from __future__ import annotations
 
 import argparse
 import asyncio
-import os
 import sys
 from collections.abc import Iterable, Mapping
 from pathlib import Path
 from uuid import uuid4
 
-from vector_harness.assembly import (
-    DEFAULT_CHILD_MAX_STEPS,
-    DEFAULT_KEEP_LAST,
-    DEFAULT_MAX_CHARS,
-    apply_patterns,
+from vector_harness.assembly import DEFAULT_KEEP_LAST, DEFAULT_MAX_CHARS
+from vector_harness.bootstrap import (
+    DEFAULT_SYSTEM,
+    build_agent,
+    load_provider,
+    memory_path as _memory_path,
+    merged_env,
 )
 from vector_harness.cli_render import _Printer
-from vector_harness.core.config import apply_config, default_config_path
-from vector_harness.core.loop import Loop
-from vector_harness.core.provider import OpenAICompatibleProvider
 from vector_harness.core.session import Session
-from vector_harness.tools.edit import EditFile
-from vector_harness.tools.read import ReadFile
-from vector_harness.tools.shell import Shell
 from vector_harness.types import ProviderError
+from vector_harness.web_sessions import session_path
 
-DEFAULT_SYSTEM = "You are a capable agent. Use tools to finish the task in the workspace."
-
-
-def build_agent(
-    *,
-    provider,
-    workspace: Path,
-    session: Session,
-    skills_dir: Path | None = None,
-    skill_name: str | None = None,
-    memory_path: Path | None = None,
-    compact: bool = False,
-    plan: bool = False,
-    reflect: bool = False,
-    subagents: bool = False,
-    max_steps: int = 25,
-):
-    """按显式开关装配循环。默认只有读、改、命令三个工具，模式不打开就不挂上。
-
-    模式的阈值和包装顺序与 ``attach`` 共用 ``apply_patterns``。
-    """
-    loop = Loop(
-        provider=provider,
-        tools=[
-            ReadFile(workspace),
-            EditFile(workspace),
-            Shell(workspace),
-        ],
-        session=session,
-        system=DEFAULT_SYSTEM,
-        max_steps=max_steps,
-    )
-    return apply_patterns(
-        loop,
-        loop,
-        provider=provider,
-        skills_dir=skills_dir,
-        skill_name=skill_name,
-        memory_path=memory_path,
-        compact=compact,
-        plan=plan,
-        reflect=reflect,
-        subagents=subagents,
-        max_chars=DEFAULT_MAX_CHARS,
-        keep_last=DEFAULT_KEEP_LAST,
-        child_max_steps=DEFAULT_CHILD_MAX_STEPS,
-    )
-
-
-def merged_env(
-    env: Mapping[str, str], *, model: str | None, base_url: str | None
-) -> dict:
-    """命令行里的模型和基址覆盖环境变量。密钥不从这里进入。"""
-    merged = dict(env)
-    if model is not None:
-        merged["VECTOR_MODEL"] = model
-    if base_url is not None:
-        merged["VECTOR_BASE_URL"] = base_url
-    return merged
+__all__ = [
+    "DEFAULT_SYSTEM",
+    "build_agent",
+    "merged_env",
+    "_memory_path",
+    "main",
+]
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -119,18 +63,6 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--base-url", default=None)
     parser.add_argument("task", nargs="*")
     return parser
-
-
-def _memory_path(
-    enabled: bool, explicit: str | None, workspace: Path
-) -> Path | None:
-    """决定记忆文件。``--memory`` 只是开关，后面的文字仍是任务。自定义路径用 ``--memory-path``。"""
-    if explicit:
-        return Path(explicit)
-    if enabled:
-        return workspace / ".vector" / "MEMORY.md"
-    return None
-
 
 
 def _task_source(task: list[str], stdin_lines: Iterable[str] | None):
@@ -179,32 +111,25 @@ def main(
         if not skills_dir.is_dir():
             print("skills directory not found", file=sys.stderr)
             return 1
-    env = merged_env(
-        os.environ if environ is None else environ,
-        model=args.model,
-        base_url=args.base_url,
-    )
-    try:
-        env = apply_config(
-            env, default_config_path() if config_file is None else config_file
-        )
-    except ProviderError as exc:
-        print(str(exc), file=sys.stderr)
-        return 1
     if provider is None:
         try:
-            provider = OpenAICompatibleProvider.from_env(env)
+            provider = load_provider(
+                environ=environ,
+                config_file=config_file,
+                model=args.model,
+                base_url=args.base_url,
+            )
         except ProviderError as exc:
             print(str(exc), file=sys.stderr)
             return 1
     if args.session:
-        session_path: Path | None = Path(args.session)
+        path = Path(args.session)
     else:
-        session_path = workspace / ".vector" / "sessions" / f"{uuid4().hex}.jsonl"
+        path = session_path(workspace, uuid4().hex)
     agent = build_agent(
         provider=provider,
         workspace=workspace,
-        session=Session(session_path),
+        session=Session(path),
         skills_dir=skills_dir,
         memory_path=_memory_path(args.memory, args.memory_path, workspace),
         compact=args.compact,

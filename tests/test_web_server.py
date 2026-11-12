@@ -25,7 +25,11 @@ def _drop_web_modules():
         if name in {
             "vector_harness.web",
             "vector_harness.web_server",
+            "vector_harness.web_http",
+            "vector_harness.web_files",
+            "vector_harness.web_runs",
             "vector_harness.web_sessions",
+            "vector_harness.bootstrap",
             "vector_harness.cli",
             "vector_harness.assembly",
         } or name == "vector_harness.patterns" or name.startswith(
@@ -984,7 +988,7 @@ def test_failed_tree_delete_is_not_reported_as_missing(tmp_path: Path, monkeypat
     def locked(path: Path) -> None:
         raise OSError("locked")
 
-    monkeypatch.setattr("vector_harness.web_server.shutil.rmtree", locked)
+    monkeypatch.setattr("vector_harness.web_files.shutil.rmtree", locked)
     server = WebServer(WebSettings(workspace=tmp_path), provider=object())
     server.start()
     try:

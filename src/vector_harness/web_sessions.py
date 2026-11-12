@@ -18,6 +18,13 @@ def is_session_id(value: str) -> bool:
     return re.fullmatch(r"[0-9a-f]{32}", value) is not None
 
 
+def session_path(workspace: Path, session_id: str) -> Path:
+    """一份会话的 JSONL 路径。id 不合法时抛出 ``ValueError``。"""
+    if not is_session_id(session_id):
+        raise ValueError(session_id)
+    return _sessions_dir(workspace) / f"{session_id}.jsonl"
+
+
 def list_sessions(workspace: Path) -> list[dict]:
     """列出会话。修改时间新的在前；时间相同则按 id 升序。
 
