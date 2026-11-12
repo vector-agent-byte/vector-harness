@@ -6,7 +6,7 @@
 from __future__ import annotations
 
 from vector_harness.core.turn import collect_turn
-from vector_harness.types import Message, ProviderError, RunResult
+from vector_harness.types import Message, ProviderError, Role, RunResult
 
 _REFLECT_SYSTEM = (
     "你是审查官，只审查、不执行。\n"
@@ -139,6 +139,9 @@ class ToolReflect:
             )
 
         if verdict["pass"]:
+            self.loop.session.append(
+                Message(role=Role.ASSISTANT, content=f"[Reflection] 通过 — {verdict['critique']}")
+            )
             return RunResult(
                 status=result.status,
                 text=result.text,

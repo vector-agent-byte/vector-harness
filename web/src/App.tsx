@@ -78,6 +78,7 @@ type StreamEvent = {
   name?: unknown
   status?: unknown
   arguments?: unknown
+  tool_call_id?: unknown
 }
 
 type RunNote = {
@@ -175,6 +176,12 @@ function toolSummary(name: string, args: Record<string, unknown> | null): string
   if (name === "shell" && typeof args.command === "string") return args.command
   if (typeof args.path === "string") return args.path
   if (name === "submit_verdict") return args.pass === true ? "通过" : "未通过"
+  if (name === "update_todos" && Array.isArray(args.todos)) {
+    const todos = args.todos as Array<Record<string, unknown>>
+    const total = todos.length
+    const done = todos.filter((t) => t.status === "completed").length
+    return `${total} 项，${done} 完成`
+  }
   const first = Object.values(args).find((v) => typeof v === "string")
   return typeof first === "string" ? first : null
 }
@@ -418,6 +425,8 @@ export default function App() {
   const sendingRef = useRef(false)
   const streamSessionRef = useRef<string | null>(null)
   const creatingRef = useRef(false)
+  const pendingToolsRef = useRef(0)
+  const resetLiveRef = useRef(false)
   const messagesRef = useRef<ChatMessage[]>([])
   const cacheRef = useRef(new Map<string, ChatMessage[]>())
   const bottomRef = useRef<HTMLDivElement | null>(null)
@@ -804,8 +813,17 @@ export default function App() {
         try {
           const data = await refreshList()
           if (!data || stopped || readingStreamRef.current) return
-          if (data.running_id !== null) return
           const current = openIdRef.current
+          if (data.running_id !== null) {
+            // Run still in progress: reload messages to show real-time tool results
+            if (!current) return
+            const loaded = await fetchSessionMessages(current)
+            if (!readingStreamRef.current && loaded && openIdRef.current === current) {
+              cacheRef.current.set(current, loaded)
+              setMessages(loaded)
+            }
+            return
+          }
           if (!current) {
             setLive(null)
             streamSessionRef.current = null
@@ -1164,6 +1182,8 @@ export default function App() {
     sendingRef.current = true
     readingStreamRef.current = true
     streamSessionRef.current = sessionId
+    pendingToolsRef.current = 0
+    resetLiveRef.current = false
     setReadingStream(true)
     setDraft("")
     setErrorText(null)
@@ -1211,15 +1231,38 @@ export default function App() {
 
       const { completed, status } = await readEventStream(response, (event) => {
         if (event.kind === "text_delta" && typeof event.text === "string") {
-          appendDelta("text", event.text)
+          if (resetLiveRef.current) {
+            resetLiveRef.current = false
+            setLive({ thinking: "", text: event.text, tools: [] })
+          } else {
+            appendDelta("text", event.text)
+          }
         } else if (event.kind === "thinking_delta" && typeof event.text === "string") {
-          appendDelta("thinking", event.text)
+          if (resetLiveRef.current) {
+            resetLiveRef.current = false
+            setLive({ thinking: event.text, text: "", tools: [] })
+          } else {
+            appendDelta("thinking", event.text)
+          }
         } else if (event.kind === "tool_call_end" && typeof event.name === "string") {
+          pendingToolsRef.current += 1
           const args =
             event.arguments && typeof event.arguments === "object"
               ? (event.arguments as Record<string, unknown>)
               : null
           appendDelta("tool", event.name, args)
+        } else if (event.kind === "tool_result") {
+          pendingToolsRef.current = Math.max(0, pendingToolsRef.current - 1)
+          if (pendingToolsRef.current === 0) {
+            resetLiveRef.current = true
+            void (async () => {
+              const loaded = await fetchSessionMessages(sessionId)
+              if (loaded && openIdRef.current === sessionId) {
+                cacheRef.current.set(sessionId, loaded)
+                setMessages(loaded)
+              }
+            })()
+          }
         }
       })
 

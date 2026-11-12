@@ -160,7 +160,7 @@ class Loop:
                 )
             )
             await ToolDispatcher(
-                self.session, self.tools, self.tool_hooks
+                self.session, self.tools, self.tool_hooks, self.on_event
             ).dispatch(turn.tool_calls)
 
             if step == self.max_steps:
