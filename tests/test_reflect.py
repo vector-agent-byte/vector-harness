@@ -26,17 +26,25 @@ def run(coro):
 
 
 def _reflect():
-    from vector_harness.patterns.reflect import Reflect
+    from vector_harness.patterns.reflect import ToolReflect
 
-    return Reflect
+    return ToolReflect
 
 
-def test_ok_keeps_the_answer_and_does_not_run_again() -> None:
+def test_pass_keeps_the_answer_and_does_not_run_again() -> None:
     session = Session.in_memory()
     provider = ScriptedProvider(
         turns=[
             ScriptedTurn(content="answer"),
-            ScriptedTurn(content='{"ok": true}'),
+            ScriptedTurn(
+                tool_calls=[
+                    ToolCall(
+                        id="v1",
+                        name="submit_verdict",
+                        arguments={"pass": True, "critique": "通过"},
+                    )
+                ]
+            ),
             ScriptedTurn(content="should-not-run"),
         ]
     )
@@ -48,19 +56,28 @@ def test_ok_keeps_the_answer_and_does_not_run_again() -> None:
     assert result.text == "answer"
     assert result.steps == 2
     assert len(provider.turns) == 1
-    assert provider.calls[1]["tools"] == []
-    assert provider.calls[1]["messages"][-1]["content"] == "answer"
+    assert provider.calls[1]["tools"] == ["submit_verdict"]
+    last_msg = provider.calls[1]["messages"][-1]["content"]
+    assert "ship it" in last_msg
+    assert "answer" in last_msg
     assert all("Reflection:" not in message.content for message in session.load())
 
 
-def test_not_ok_runs_the_critique_once() -> None:
+def test_fail_runs_critique_once() -> None:
     session = Session.in_memory()
     provider = ScriptedProvider(
         turns=[
             ScriptedTurn(content="draft"),
-            ScriptedTurn(content='{"ok": false, "critique": "add a period"}'),
+            ScriptedTurn(
+                tool_calls=[
+                    ToolCall(
+                        id="v1",
+                        name="submit_verdict",
+                        arguments={"pass": False, "critique": "add a period"},
+                    )
+                ]
+            ),
             ScriptedTurn(content="draft."),
-            ScriptedTurn(content='{"ok": true}'),
         ]
     )
     loop = Loop(provider=provider, tools=[], session=session, system="sys")
@@ -70,21 +87,21 @@ def test_not_ok_runs_the_critique_once() -> None:
     assert result.status == "complete"
     assert result.text == "draft."
     assert result.steps == 3
-    assert len(provider.turns) == 1
-    assert provider.calls[1]["tools"] == []
+    assert len(provider.turns) == 0
+    assert provider.calls[1]["tools"] == ["submit_verdict"]
     critique = session.load()[2]
     assert critique.role == "user"
     assert critique.content == "Reflection:\nadd a period"
     assert provider.calls[2]["messages"][-1]["content"] == critique.content
 
 
-def test_invalid_json_retries_once_then_accepts() -> None:
+def test_no_tool_call_uses_text_as_critique() -> None:
     session = Session.in_memory()
     provider = ScriptedProvider(
         turns=[
             ScriptedTurn(content="answer"),
-            ScriptedTurn(content="nope"),
-            ScriptedTurn(content='{"ok": true}'),
+            ScriptedTurn(content="needs more detail"),  # reviewer outputs text, no tool
+            ScriptedTurn(content="revised"),
         ]
     )
     loop = Loop(provider=provider, tools=[], session=session, system="sys")
@@ -92,43 +109,10 @@ def test_invalid_json_retries_once_then_accepts() -> None:
     result = run(_reflect()(loop).run("ship it"))
 
     assert result.status == "complete"
-    assert result.text == "answer"
+    assert result.text == "revised"
     assert result.steps == 3
-    assert provider.calls[2]["tools"] == []
-    assert provider.calls[2]["messages"] == [
-        {
-            "role": "user",
-            "content": "Invalid reflection JSON: nope",
-            "tool_calls": None,
-            "tool_call_id": None,
-            "is_error": False,
-        }
-    ]
-
-
-def test_two_invalid_reflections_error_without_revising() -> None:
-    session = Session.in_memory()
-    provider = ScriptedProvider(
-        turns=[
-            ScriptedTurn(content="answer"),
-            ScriptedTurn(content="nope"),
-            ScriptedTurn(content="nope"),
-            ScriptedTurn(
-                tool_calls=[
-                    ToolCall(id="1", name="edit_file", arguments={"path": "x"})
-                ]
-            ),
-        ]
-    )
-    loop = Loop(provider=provider, tools=[], session=session, system="sys")
-
-    result = run(_reflect()(loop).run("ship it"))
-
-    assert result.status == "error"
-    assert result.text.startswith("Invalid reflection JSON:")
-    assert result.steps == 3
-    assert len(provider.turns) == 1
-    assert all("Reflection:" not in message.content for message in session.load())
+    messages = session.load()
+    assert any("Reflection:\nneeds more detail" in m.content for m in messages)
 
 
 def test_max_steps_skips_reflection() -> None:
@@ -140,7 +124,15 @@ def test_max_steps_skips_reflection() -> None:
                     ToolCall(id="1", name="missing", arguments={"path": "x"})
                 ]
             ),
-            ScriptedTurn(content='{"ok": true}'),
+            ScriptedTurn(
+                tool_calls=[
+                    ToolCall(
+                        id="v1",
+                        name="submit_verdict",
+                        arguments={"pass": True, "critique": "通过"},
+                    )
+                ]
+            ),
         ]
     )
     loop = Loop(
@@ -192,11 +184,11 @@ def test_build_agent_wraps_reflect_outside_plan(tmp_path: Path) -> None:
         plan=True,
         reflect=True,
     )
-    from vector_harness.patterns.plan import PlanThenExecute
-    from vector_harness.patterns.reflect import Reflect
+    from vector_harness.patterns.plan import TodoPlan
+    from vector_harness.patterns.reflect import ToolReflect
 
-    assert type(agent) is Reflect
-    assert type(agent.inner) is PlanThenExecute
+    assert type(agent) is ToolReflect
+    assert type(agent.inner) is TodoPlan
     assert type(agent.loop) is CoreLoop
 
 
@@ -208,7 +200,15 @@ def test_reflect_flag_prints_the_inner_loop(tmp_path: Path, capsys) -> None:
     provider = ScriptedProvider(
         turns=[
             ScriptedTurn(content="answer"),
-            ScriptedTurn(content='{"ok": true}'),
+            ScriptedTurn(
+                tool_calls=[
+                    ToolCall(
+                        id="v1",
+                        name="submit_verdict",
+                        arguments={"pass": True, "critique": "通过"},
+                    )
+                ]
+            ),
         ]
     )
     code = main(
@@ -218,4 +218,4 @@ def test_reflect_flag_prints_the_inner_loop(tmp_path: Path, capsys) -> None:
     )
     assert code == 0
     assert "answer" in capsys.readouterr().out
-    assert provider.calls[1]["tools"] == []
+    assert provider.calls[1]["tools"] == ["submit_verdict"]

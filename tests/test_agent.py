@@ -173,7 +173,6 @@ def test_plan_runs_tool_hooks_on_the_same_loop():
     hook = CountingHook()
     provider = ScriptedProvider(
         turns=[
-            ScriptedTurn(content='{"steps": ["read"]}'),
             ScriptedTurn(
                 tool_calls=[ToolCall(id="1", name="read_file", arguments={"path": "x"})]
             ),
@@ -201,7 +200,15 @@ def test_reflect_runs_tool_hooks_on_the_same_loop():
                 tool_calls=[ToolCall(id="1", name="read_file", arguments={"path": "x"})]
             ),
             ScriptedTurn(content="done"),
-            ScriptedTurn(content='{"ok": true}'),
+            ScriptedTurn(
+                tool_calls=[
+                    ToolCall(
+                        id="v1",
+                        name="submit_verdict",
+                        arguments={"pass": True, "critique": "通过"},
+                    )
+                ]
+            ),
         ]
     )
     agent = VectorHarness(
@@ -225,7 +232,17 @@ def test_constructor_loop_on_event_is_used_by_plan_and_loop():
 
     provider = ScriptedProvider(
         turns=[
-            ScriptedTurn(content='{"steps": ["read"]}'),
+            ScriptedTurn(
+                tool_calls=[
+                    ToolCall(
+                        id="t1",
+                        name="update_todos",
+                        arguments={
+                            "todos": [{"id": 1, "content": "read", "status": "completed"}]
+                        },
+                    )
+                ]
+            ),
             ScriptedTurn(content="done"),
         ]
     )
@@ -239,6 +256,7 @@ def test_constructor_loop_on_event_is_used_by_plan_and_loop():
 
     assert agent.loop.on_event is record
     assert agent.run("go") == "done"
+    tool_ends = [e for e in seen if e.kind == "tool_call_end" and e.name == "update_todos"]
+    assert tool_ends
     texts = [event.text for event in seen if event.kind == "text_delta"]
-    assert '{"steps": ["read"]}' in texts
     assert "done" in texts

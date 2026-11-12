@@ -870,7 +870,9 @@
 }
 
 .tool-name {
-  display: inline-block;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
   margin-top: 8px;
   margin-right: 6px;
   padding: 2px 8px;
@@ -879,6 +881,19 @@
   color: #444;
   font-family: "Segoe UI", "PingFang SC", sans-serif;
   font-size: 12px;
+  max-width: 100%;
+}
+
+.tool-name-label {
+  flex-shrink: 0;
+}
+
+.tool-name-arg {
+  color: #888;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 320px;
 }
 
 .thinking {

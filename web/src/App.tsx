@@ -43,6 +43,7 @@ type DirListing = {
 type ToolCall = {
   id: string
   name: string
+  args: Record<string, unknown> | null
 }
 
 type ChatMessage = {
@@ -54,10 +55,15 @@ type ChatMessage = {
   created_at: number | null
 }
 
+type LiveTool = {
+  name: string
+  args: Record<string, unknown> | null
+}
+
 type LiveTurn = {
   thinking: string
   text: string
-  tools: string[]
+  tools: LiveTool[]
 }
 
 type SessionList = {
@@ -71,6 +77,7 @@ type StreamEvent = {
   text?: unknown
   name?: unknown
   status?: unknown
+  arguments?: unknown
 }
 
 type RunNote = {
@@ -126,6 +133,10 @@ function normalizeTools(value: unknown): ToolCall[] | null {
     tools.push({
       id: typeof record.id === "string" ? record.id : "",
       name: typeof record.name === "string" ? record.name : "",
+      args:
+        record.arguments && typeof record.arguments === "object"
+          ? (record.arguments as Record<string, unknown>)
+          : null,
     })
   }
   return tools
@@ -157,6 +168,15 @@ async function readError(response: Response): Promise<string> {
     // A 4xx without JSON still needs a visible error string.
   }
   return "bad_request"
+}
+
+function toolSummary(name: string, args: Record<string, unknown> | null): string | null {
+  if (!args) return null
+  if (name === "shell" && typeof args.command === "string") return args.command
+  if (typeof args.path === "string") return args.path
+  if (name === "submit_verdict") return args.pass === true ? "通过" : "未通过"
+  const first = Object.values(args).find((v) => typeof v === "string")
+  return typeof first === "string" ? first : null
 }
 
 function parseEvent(block: string): StreamEvent | null {
@@ -1094,13 +1114,13 @@ export default function App() {
     }
   }
 
-  function appendDelta(kind: "thinking" | "text" | "tool", piece: string) {
+  function appendDelta(kind: "thinking" | "text" | "tool", piece: string, toolArgs?: Record<string, unknown> | null) {
     setLive((prev) => {
       const base = prev ?? { thinking: "", text: "", tools: [] }
       if (kind === "thinking") return { ...base, thinking: base.thinking + piece }
       if (kind === "text") return { ...base, text: base.text + piece }
       if (!piece) return base
-      return { ...base, tools: [...base.tools, piece] }
+      return { ...base, tools: [...base.tools, { name: piece, args: toolArgs ?? null }] }
     })
   }
 
@@ -1195,7 +1215,11 @@ export default function App() {
         } else if (event.kind === "thinking_delta" && typeof event.text === "string") {
           appendDelta("thinking", event.text)
         } else if (event.kind === "tool_call_end" && typeof event.name === "string") {
-          appendDelta("tool", event.name)
+          const args =
+            event.arguments && typeof event.arguments === "object"
+              ? (event.arguments as Record<string, unknown>)
+              : null
+          appendDelta("tool", event.name, args)
         }
       })
 
@@ -1357,11 +1381,17 @@ export default function App() {
                             ) : (
                               <Markdown text={message.content} />
                             )}
-                            {message.tool_calls?.map((call, callIndex) => (
-                              <div key={`${call.id}-${callIndex}`} className="tool-name">
-                                {call.name}
-                              </div>
-                            ))}
+                            {message.tool_calls?.map((call, callIndex) => {
+                              const summary = toolSummary(call.name, call.args)
+                              return (
+                                <div key={`${call.id}-${callIndex}`} className="tool-name">
+                                  <span className="tool-name-label">{call.name}</span>
+                                  {summary ? (
+                                    <span className="tool-name-arg">{summary.length > 80 ? summary.slice(0, 80) + "…" : summary}</span>
+                                  ) : null}
+                                </div>
+                              )
+                            })}
                           </div>
                           {timeLabel ? <div className="message-time">{timeLabel}</div> : null}
                         </div>
@@ -1381,11 +1411,17 @@ export default function App() {
                           </div>
                         ) : null}
                         <Markdown text={live.text} />
-                        {live.tools.map((name, index) => (
-                          <div key={`${name}-${index}`} className="tool-name">
-                            {name}
-                          </div>
-                        ))}
+                        {live.tools.map((tool, index) => {
+                          const summary = toolSummary(tool.name, tool.args)
+                          return (
+                            <div key={`${tool.name}-${index}`} className="tool-name">
+                              <span className="tool-name-label">{tool.name}</span>
+                              {summary ? (
+                                <span className="tool-name-arg">{summary.length > 80 ? summary.slice(0, 80) + "…" : summary}</span>
+                              ) : null}
+                            </div>
+                          )
+                        })}
                       </div>
                       {liveTiming ? <div className="message-time">{liveTiming}</div> : null}
                     </div>

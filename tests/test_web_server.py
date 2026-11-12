@@ -198,7 +198,6 @@ def test_plan_flag_uses_the_plan_system_before_the_answer(tmp_path: Path):
     session_id = create_session(tmp_path)
     provider = ScriptedProvider(
         turns=[
-            ScriptedTurn(content='{"steps": ["look"]}'),
             ScriptedTurn(content="做完了"),
         ]
     )
@@ -212,7 +211,7 @@ def test_plan_flag_uses_the_plan_system_before_the_answer(tmp_path: Path):
             )
         assert response.status_code == 200
         assert '"status": "complete"' in response.text
-        assert provider.calls[0]["system"] == 'Reply with JSON only, of the form {"steps": ["..."]}.'
+        assert "update_todos" in provider.calls[0]["tools"]
         stored = (tmp_path / ".vector" / "sessions" / f"{session_id}.jsonl").read_text(encoding="utf-8")
         assert "做完了" in stored
     finally:
@@ -223,7 +222,6 @@ def test_page_mode_overrides_the_startup_flags(tmp_path: Path):
     session_id = create_session(tmp_path)
     provider = ScriptedProvider(
         turns=[
-            ScriptedTurn(content='{"steps": ["look"]}'),
             ScriptedTurn(content="做完了"),
         ]
     )
@@ -236,7 +234,7 @@ def test_page_mode_overrides_the_startup_flags(tmp_path: Path):
                 json={"text": "去做", "mode": "plan"},
             )
         assert response.status_code == 200
-        assert provider.calls[0]["system"] == 'Reply with JSON only, of the form {"steps": ["..."]}.'
+        assert "update_todos" in provider.calls[0]["tools"]
     finally:
         server.shutdown()
 
@@ -259,11 +257,21 @@ def test_react_mode_skips_plan_even_when_the_server_started_with_it(tmp_path: Pa
 
 
 def test_reflect_mode_asks_for_a_critique_after_the_answer(tmp_path: Path):
+    from vector_harness import ToolCall
+
     session_id = create_session(tmp_path)
     provider = ScriptedProvider(
         turns=[
             ScriptedTurn(content="初稿"),
-            ScriptedTurn(content='{"ok": true}'),
+            ScriptedTurn(
+                tool_calls=[
+                    ToolCall(
+                        id="v1",
+                        name="submit_verdict",
+                        arguments={"pass": True, "critique": "通过"},
+                    )
+                ]
+            ),
         ]
     )
     server = WebServer(WebSettings(workspace=tmp_path), provider)
@@ -276,7 +284,7 @@ def test_reflect_mode_asks_for_a_critique_after_the_answer(tmp_path: Path):
             )
         assert response.status_code == 200
         assert provider.calls[0]["system"] == DEFAULT_SYSTEM
-        assert provider.calls[1]["system"].startswith("Reply with JSON only")
+        assert "submit_verdict" in provider.calls[1]["tools"]
     finally:
         server.shutdown()
 

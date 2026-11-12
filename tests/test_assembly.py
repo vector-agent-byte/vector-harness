@@ -175,8 +175,8 @@ def test_repeated_plan_and_reflect_stay_one_layer():
     attach(agent, plan=True, reflect=True)
     attach(agent, plan=True, reflect=True)
 
-    assert type(agent.runner).__name__ == "Reflect"
-    assert type(agent.runner.inner).__name__ == "PlanThenExecute"
+    assert type(agent.runner).__name__ == "ToolReflect"
+    assert type(agent.runner.inner).__name__ == "TodoPlan"
     assert agent.runner.inner.loop is agent.loop
     assert agent.runner.loop is agent.loop
 
@@ -220,8 +220,8 @@ def test_constructor_attaches_skills_plan_and_reflect(tmp_path: Path):
     assert "- greet:" in agent.system_prompt
     assert agent.system_prompt == agent.loop.system
     assert "read_skill" in _names(agent)
-    assert type(agent.runner).__name__ == "Reflect"
-    assert type(agent.runner.inner).__name__ == "PlanThenExecute"
+    assert type(agent.runner).__name__ == "ToolReflect"
+    assert type(agent.runner.inner).__name__ == "TodoPlan"
     assert agent.runner.loop is agent.loop
 
 
@@ -246,18 +246,55 @@ def test_plan_then_reflect_wraps_in_that_order():
 
     attach(agent, plan=True, reflect=True)
 
-    assert type(agent.runner).__name__ == "Reflect"
-    assert type(agent.runner.inner).__name__ == "PlanThenExecute"
+    assert type(agent.runner).__name__ == "ToolReflect"
+    assert type(agent.runner.inner).__name__ == "TodoPlan"
     assert agent.runner.inner.loop is agent.loop
 
 
 def test_failed_reflection_plans_again():
+    from vector_harness import ToolCall
+
     provider = ScriptedProvider(
         turns=[
-            ScriptedTurn(content='{"steps":["one"]}'),
+            # First execution: model calls update_todos then answers
+            ScriptedTurn(
+                tool_calls=[
+                    ToolCall(
+                        id="p1",
+                        name="update_todos",
+                        arguments={
+                            "todos": [
+                                {"id": 1, "content": "one", "status": "completed"}
+                            ]
+                        },
+                    )
+                ]
+            ),
             ScriptedTurn(content="第一版"),
-            ScriptedTurn(content='{"ok": false, "critique": "改"}'),
-            ScriptedTurn(content='{"steps":["two"]}'),
+            # Reviewer calls submit_verdict(fail)
+            ScriptedTurn(
+                tool_calls=[
+                    ToolCall(
+                        id="v1",
+                        name="submit_verdict",
+                        arguments={"pass": False, "critique": "改"},
+                    )
+                ]
+            ),
+            # Second execution: model calls update_todos again then answers
+            ScriptedTurn(
+                tool_calls=[
+                    ToolCall(
+                        id="p2",
+                        name="update_todos",
+                        arguments={
+                            "todos": [
+                                {"id": 1, "content": "two", "status": "completed"}
+                            ]
+                        },
+                    )
+                ]
+            ),
             ScriptedTurn(content="第二版"),
         ]
     )
