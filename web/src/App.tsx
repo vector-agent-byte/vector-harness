@@ -335,7 +335,18 @@ async function readEventStream(
 function formatClock(seconds: number): string {
   const date = new Date(seconds * 1000)
   const pad = (value: number) => String(value).padStart(2, "0")
-  return `${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`
+}
+
+function formatRelativeTime(updatedAt: number): string {
+  const diffMs = Date.now() - updatedAt * 1000
+  const diffMins = Math.floor(diffMs / 60000)
+  if (diffMins < 1) return "刚刚"
+  if (diffMins < 60) return `${diffMins}分钟`
+  const diffHours = Math.floor(diffMins / 60)
+  if (diffHours < 24) return `${diffHours}小时`
+  const diffDays = Math.floor(diffHours / 24)
+  return `${diffDays}天`
 }
 
 function formatDuration(ms: number): string {
@@ -478,6 +489,60 @@ function messageTimeLabel(message: ChatMessage, sentAt: number | null): string |
   return clock
 }
 
+type LiveTurnForTrace = { thinking: string; text: string; tools: { name: string; args: Record<string, unknown> | null }[] } | null
+
+function traceRoleLabel(role: string): string {
+  if (role === "user") return "用户"
+  if (role === "assistant") return "助手"
+  if (role === "tool") return "工具"
+  return role
+}
+
+function traceSnippet(msg: ChatMessage): string {
+  if (msg.tool_calls && msg.tool_calls.length > 0) {
+    return msg.tool_calls
+      .filter((c) => c.name)
+      .map((c) => {
+        const arg = c.args ? Object.entries(c.args).map(([k, v]) => `${k}=${String(v).slice(0, 40)}`).join(", ") : ""
+        return `${c.name}(${arg})`
+      })
+      .join(" · ")
+  }
+  return msg.content.replace(/\s+/g, " ").slice(0, 160)
+}
+
+function TraceView({ messages, live }: { messages: ChatMessage[]; live: LiveTurnForTrace }) {
+  const rows: Array<{ role: string; label: string; snippet: string; isError: boolean; isLive: boolean }> = []
+  for (const msg of messages) {
+    if (!msg.content && !msg.tool_calls?.length) continue
+    rows.push({
+      role: msg.role,
+      label: traceRoleLabel(msg.role),
+      snippet: traceSnippet(msg),
+      isError: msg.is_error,
+      isLive: false,
+    })
+  }
+  if (live) {
+    if (live.thinking) rows.push({ role: "thinking", label: "思考", snippet: live.thinking.replace(/\s+/g, " ").slice(0, 160), isError: false, isLive: true })
+    if (live.text) rows.push({ role: "assistant", label: "助手", snippet: live.text.replace(/\s+/g, " ").slice(0, 160), isError: false, isLive: true })
+    for (const tool of live.tools) {
+      if (tool.name) rows.push({ role: "tool", label: "工具", snippet: tool.name, isError: false, isLive: true })
+    }
+  }
+  return (
+    <div className="trace-view">
+      {rows.map((row, i) => (
+        <div key={i} className={`trace-row trace-${row.role}${row.isError ? " is-error" : ""}${row.isLive ? " is-live" : ""}`}>
+          <span className="trace-role">{row.label}</span>
+          <span className="trace-snippet">{row.snippet}</span>
+        </div>
+      ))}
+      {rows.length === 0 ? <div className="trace-empty">暂无轨迹</div> : null}
+    </div>
+  )
+}
+
 export default function App() {
   const [sessions, setSessions] = useState<SessionItem[]>([])
   const [runningId, setRunningId] = useState<string | null>(null)
@@ -512,6 +577,9 @@ export default function App() {
   const [locatedUser, setLocatedUser] = useState<number | null>(null)
   const [dialogOffset, setDialogOffset] = useState({ x: 0, y: 0 })
   const [dialogSize, setDialogSize] = useState<{ width: number; height: number } | null>(null)
+  const [sidebarWidth, setSidebarWidth] = useState(220)
+  const [workdirWidth, setWorkdirWidth] = useState(260)
+  const [viewMode, setViewMode] = useState<"chat" | "trace">("chat")
 
   const openIdRef = useRef<string | null>(null)
   const readingStreamRef = useRef(false)
@@ -534,6 +602,7 @@ export default function App() {
     | null
   >(null)
   dialogOffsetRef.current = dialogOffset
+  const panelResizeRef = useRef<{ panel: "sidebar" | "workdir"; startX: number; startWidth: number } | null>(null)
   const menuRef = useRef<HTMLDivElement | null>(null)
   const entryMenuRef = useRef<HTMLDivElement | null>(null)
   const viewedPathRef = useRef("")
@@ -758,6 +827,16 @@ export default function App() {
 
   useEffect(() => {
     function onMove(event: PointerEvent) {
+      const drag = panelResizeRef.current
+      if (drag) {
+        const delta = event.clientX - drag.startX
+        if (drag.panel === "sidebar") {
+          setSidebarWidth(clamp(drag.startWidth + delta, 140, 480))
+        } else {
+          setWorkdirWidth(clamp(drag.startWidth - delta, 160, 520))
+        }
+        return
+      }
       const start = dialogGesture.current
       if (!start) return
       if (start.kind === "drag") {
@@ -779,6 +858,7 @@ export default function App() {
       setDialogSize({ width, height })
     }
     function onUp() {
+      panelResizeRef.current = null
       dialogGesture.current = null
     }
     window.addEventListener("pointermove", onMove)
@@ -788,6 +868,16 @@ export default function App() {
       window.removeEventListener("pointerup", onUp)
     }
   }, [])
+
+  function beginPanelResize(event: ReactPointerEvent<HTMLDivElement>, panel: "sidebar" | "workdir") {
+    event.preventDefault()
+    panelResizeRef.current = {
+      panel,
+      startX: event.clientX,
+      startWidth: panel === "sidebar" ? sidebarWidth : workdirWidth,
+    }
+    event.currentTarget.setPointerCapture(event.pointerId)
+  }
 
   function beginDialogDrag(event: ReactPointerEvent<HTMLElement>) {
     if (event.button !== 0) return
@@ -1454,7 +1544,7 @@ export default function App() {
 
   return (
     <div className="app">
-      <aside className="sidebar">
+      <aside className="sidebar" style={{ width: sidebarWidth }}>
         <div className="brand">Vector Harness</div>
         <button type="button" className="new-session" onClick={() => void createSession()}>
           <span className="plus" aria-hidden="true">
@@ -1490,22 +1580,44 @@ export default function App() {
                     {session.title}
                     {session.skill ? <span className="session-skill">{session.skill}</span> : null}
                   </span>
-                  {running ? <span className="running-mark">运行中</span> : null}
+                  {running
+                    ? <span className="running-mark">运行中</span>
+                    : <span className="session-age">{formatRelativeTime(session.updated_at)}</span>
+                  }
                 </button>
               </li>
             )
           })}
         </ul>
       </aside>
+      <div className="panel-resize panel-resize-left" onPointerDown={(e) => beginPanelResize(e, "sidebar")} />
       <main className="main">
         <header className="topbar">
           <div className="title-block">
             <h1 className="current-title">{openSession ? openSession.title : "会话"}</h1>
             {openSession?.started_at != null ? (
-              <span className="session-start-time">开始于 {formatClock(openSession.started_at)}</span>
+              <span className="session-start-time">{formatClock(openSession.started_at)}</span>
             ) : null}
           </div>
         </header>
+        {openId ? (
+          <div className="view-tabs">
+            <button
+              type="button"
+              className={viewMode === "chat" ? "view-tab is-active" : "view-tab"}
+              onClick={() => setViewMode("chat")}
+            >
+              会话
+            </button>
+            <button
+              type="button"
+              className={viewMode === "trace" ? "view-tab is-active" : "view-tab"}
+              onClick={() => setViewMode("trace")}
+            >
+              轨迹
+            </button>
+          </div>
+        ) : null}
         {errorText ? (
           <div className="error-banner">
             <span className="error-banner-icon" aria-hidden="true">✕</span>
@@ -1517,6 +1629,9 @@ export default function App() {
         ) : (
           <>
             <div className="transcript-wrap">
+            {viewMode === "trace" ? (
+              <TraceView messages={messages} live={showLive ? live : null} />
+            ) : (
             <div className="transcript" ref={transcriptRef}>
               <div className="column">
                 {openId ? (() => {
@@ -1632,6 +1747,7 @@ export default function App() {
                 <div ref={bottomRef} />
               </div>
             </div>
+            )}
             {userMarks.length > 0 ? (
               <div className="user-rail" aria-label="用户输入">
                 {userMarks.map((mark) => (
@@ -1746,7 +1862,8 @@ export default function App() {
           </>
         )}
       </main>
-      <aside className="workdir-panel">
+      <div className="panel-resize panel-resize-right" onPointerDown={(e) => beginPanelResize(e, "workdir")} />
+      <aside className="workdir-panel" style={{ width: workdirWidth }}>
         <div className="workdir-card">
           <div className="workdir-head">
             <span className="workdir-kicker">工作目录</span>
@@ -1766,7 +1883,14 @@ export default function App() {
             disabled={inputLocked}
             onClick={() => void openPicker()}
           >
-            <span className="workdir-path">{workdir || "选择目录"}</span>
+            {workdir ? (
+              <>
+                <span className="workdir-dirname">{workdir.split(/[/\\]/).filter(Boolean).pop() ?? workdir}</span>
+                <span className="workdir-path">{workdir}</span>
+              </>
+            ) : (
+              <span className="workdir-path">选择目录</span>
+            )}
           </button>
         </div>
         {viewed && browse ? (

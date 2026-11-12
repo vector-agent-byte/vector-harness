@@ -112,16 +112,28 @@
   letter-spacing: 0.03em;
 }
 
+.workdir-dirname {
+  display: block;
+  font-size: 13px;
+  font-weight: 600;
+  color: #1a1a1a;
+  line-height: 1.4;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .workdir-path {
   display: block;
   max-width: 100%;
   overflow: hidden;
-  font-size: 12.5px;
-  font-weight: 500;
-  line-height: 1.45;
+  font-size: 11px;
+  font-weight: 400;
+  line-height: 1.4;
   text-overflow: ellipsis;
   white-space: nowrap;
-  color: #333;
+  color: #999;
+  margin-top: 1px;
 }
 
 /* ── 对话框 ── */
@@ -1055,17 +1067,16 @@
 
 .plan-header {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
-  gap: 8px;
+  gap: 3px 8px;
   margin-bottom: 10px;
 }
 
 .plan-label {
-  font-size: 10.5px;
+  font-size: 11.5px;
   font-weight: 600;
-  letter-spacing: 0.05em;
-  text-transform: uppercase;
-  color: #999;
+  color: #555;
 }
 
 .plan-fraction {
@@ -1075,11 +1086,12 @@
 }
 
 .plan-bar-wrap {
-  flex: 1;
-  height: 3px;
+  flex-basis: 100%;
+  height: 4px;
   border-radius: 2px;
   background: #e5e5e5;
   overflow: hidden;
+  margin-top: 4px;
 }
 
 .plan-bar-fill {
@@ -1095,7 +1107,7 @@
   padding: 0;
   display: flex;
   flex-direction: column;
-  gap: 5px;
+  gap: 6px;
 }
 
 .plan-item {
@@ -1108,19 +1120,21 @@
 }
 
 .plan-item.completed {
-  color: #aaa;
+  color: #888;
 }
 
 .plan-icon {
   flex: none;
-  width: 14px;
-  font-size: 10px;
-  margin-top: 3px;
+  width: 16px;
+  font-size: 11px;
+  margin-top: 2px;
   color: #ccc;
+  text-align: center;
 }
 
 .plan-item.completed .plan-icon {
   color: #22c55e;
+  font-size: 12px;
 }
 
 .plan-item.in_progress .plan-icon {
@@ -1133,7 +1147,7 @@
 
 .plan-item.completed .plan-content {
   text-decoration: line-through;
-  text-decoration-color: #ccc;
+  text-decoration-color: #bbb;
 }
 
 .plan-item.in_progress .plan-content {
@@ -1492,4 +1506,155 @@
 
 .composer textarea:disabled {
   cursor: not-allowed;
+}
+
+/* ── 面板拖拽把手 ── */
+.panel-resize {
+  flex: none;
+  width: 1px;
+  cursor: col-resize;
+  background: #e5e5e5;
+  position: relative;
+  z-index: 10;
+  transition: background 0.15s;
+}
+
+.panel-resize::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: -3px;
+  right: -3px;
+}
+
+.panel-resize:hover,
+.panel-resize:active {
+  background: #2563eb;
+}
+
+/* ── 会话/轨迹 切换 ── */
+.view-tabs {
+  flex: none;
+  display: flex;
+  align-items: center;
+  padding: 0 24px;
+  border-bottom: 1px solid #e5e5e5;
+  background: #fff;
+}
+
+.view-tab {
+  padding: 8px 14px;
+  border: 0;
+  background: transparent;
+  font: inherit;
+  font-size: 13px;
+  color: #999;
+  cursor: pointer;
+  border-bottom: 2px solid transparent;
+  margin-bottom: -1px;
+  transition: color 0.1s;
+}
+
+.view-tab:hover {
+  color: #555;
+}
+
+.view-tab.is-active {
+  color: #2563eb;
+  font-weight: 600;
+  border-bottom-color: #2563eb;
+}
+
+/* ── 轨迹视图 ── */
+.trace-view {
+  height: 100%;
+  overflow: auto;
+  display: flex;
+  flex-direction: column;
+}
+
+.trace-row {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  padding: 7px 24px;
+  border-bottom: 1px solid #f5f5f5;
+  min-width: 0;
+}
+
+.trace-row:hover {
+  background: #fafafa;
+}
+
+.trace-role {
+  flex: none;
+  width: 36px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.03em;
+  padding: 2px 6px;
+  border-radius: 4px;
+  text-align: center;
+}
+
+.trace-user .trace-role {
+  background: #f0f0f0;
+  color: #555;
+}
+
+.trace-assistant .trace-role {
+  background: #eff6ff;
+  color: #2563eb;
+}
+
+.trace-tool .trace-role {
+  background: #f0fdf4;
+  color: #15803d;
+}
+
+.trace-thinking .trace-role {
+  background: #fafafa;
+  color: #999;
+}
+
+.trace-row.is-error .trace-role {
+  background: #fff5f5;
+  color: #991b1b;
+}
+
+.trace-snippet {
+  flex: 1;
+  min-width: 0;
+  font-size: 12.5px;
+  font-family: ui-monospace, Consolas, monospace;
+  color: #333;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  line-height: 1.4;
+}
+
+.trace-row.is-error .trace-snippet {
+  color: #991b1b;
+}
+
+.trace-row.is-live .trace-snippet {
+  color: #2563eb;
+}
+
+.trace-empty {
+  padding: 48px 24px;
+  color: #aaa;
+  font-size: 13px;
+  text-align: center;
+}
+
+/* ── 会话相对时间 ── */
+.session-age {
+  flex: none;
+  font-size: 11px;
+  color: #bbb;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
 }
