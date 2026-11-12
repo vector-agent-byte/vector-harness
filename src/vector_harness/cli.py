@@ -58,6 +58,7 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--plan", action="store_true")
     parser.add_argument("--reflect", action="store_true")
     parser.add_argument("--subagents", action="store_true")
+    parser.add_argument("--fetch", action="store_true", help="Enable web_fetch tool.")
     parser.add_argument("--max-steps", type=int, default=25)
     parser.add_argument("--model", default=None)
     parser.add_argument("--base-url", default=None)
@@ -136,6 +137,7 @@ def main(
         plan=args.plan,
         reflect=args.reflect,
         subagents=args.subagents,
+        fetch=args.fetch,
         max_steps=args.max_steps,
     )
     printer = _Printer(sys.stdout)

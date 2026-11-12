@@ -23,6 +23,7 @@ from vector_harness.core.loop import Loop
 from vector_harness.core.provider import OpenAICompatibleProvider
 from vector_harness.core.session import Session
 from vector_harness.tools.edit import EditFile
+from vector_harness.tools.fetch import WebFetch
 from vector_harness.tools.read import ReadFile
 from vector_harness.tools.shell import Shell
 
@@ -41,19 +42,23 @@ def build_agent(
     plan: bool = False,
     reflect: bool = False,
     subagents: bool = False,
+    fetch: bool = False,
     max_steps: int = 25,
 ):
     """按显式开关装配循环。默认只有读、改、命令三个工具，模式不打开就不挂上。
 
     模式的阈值和包装顺序与 ``attach`` 共用 ``apply_patterns``。
     """
+    tools = [
+        ReadFile(workspace),
+        EditFile(workspace),
+        Shell(workspace),
+    ]
+    if fetch:
+        tools.append(WebFetch())
     loop = Loop(
         provider=provider,
-        tools=[
-            ReadFile(workspace),
-            EditFile(workspace),
-            Shell(workspace),
-        ],
+        tools=tools,
         session=session,
         system=DEFAULT_SYSTEM,
         max_steps=max_steps,
