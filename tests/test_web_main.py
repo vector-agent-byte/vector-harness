@@ -18,7 +18,11 @@ def _drop_loaded_web_modules() -> None:
         if name in {
             "vector_harness.web",
             "vector_harness.web_server",
+            "vector_harness.web_http",
+            "vector_harness.web_files",
+            "vector_harness.web_runs",
             "vector_harness.web_sessions",
+            "vector_harness.bootstrap",
             "vector_harness.cli",
             "vector_harness.assembly",
         } or name == "vector_harness.patterns" or name.startswith(

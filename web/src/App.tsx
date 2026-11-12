@@ -1,81 +1,52 @@
 import { useCallback, useEffect, useRef, useState } from "react"
-import type { FormEvent, KeyboardEvent, MouseEvent } from "react"
-import ReactMarkdown from "react-markdown"
-import remarkGfm from "remark-gfm"
+import type { CSSProperties, FormEvent, KeyboardEvent, MouseEvent, PointerEvent as ReactPointerEvent } from "react"
+import { entryMenu as entryMenuLabels, findListableDir, highlightCode, listingGenerationIsCurrent, refreshMayReplaceDraft, REFRESH_MS, shouldShowPicker, viewedPathAfter } from "./dirPath.ts"
+import {
+  normalizeMessages,
+  parseDirs,
+  parseSessionList,
+  parseSkills,
+  readError,
+  readEventStream,
+} from "./api.ts"
+import {
+  clamp,
+  errorLabel,
+  formatClock,
+  formatDuration,
+  formatRelativeTime,
+  messageTimeLabel,
+  sessionProperties,
+  toolSummary,
+  userMessage,
+  userPreview,
+  viewedPath,
+} from "./format.ts"
+import {
+  Markdown,
+  ReflectionCard,
+  StatusNote,
+  ThinkingBlock,
+  TodoList,
+  TraceView,
+  parseReflection,
+} from "./components.tsx"
+import type {
+  ChatMessage,
+  DirListing,
+  EntryKind,
+  EntryMenu,
+  FilePreview,
+  LiveTurn,
+  NamedPath,
+  RunNote,
+  SessionItem,
+  SessionList,
+  SessionMenu,
+  SkillItem,
+  TodoItem,
+} from "./types.ts"
 import "./App.css"
-
-function Markdown({ text }: { text: string }) {
-  if (text === "") return null
-  return (
-    <div className="md">
-      <ReactMarkdown remarkPlugins={[remarkGfm]}>{text}</ReactMarkdown>
-    </div>
-  )
-}
-
-type SessionItem = {
-  id: string
-  title: string
-  updated_at: number
-  skill: string | null
-  started_at: number | null
-  duration_ms: number | null
-}
-
-type SkillItem = {
-  name: string
-  description: string
-}
-
-type DirEntry = {
-  name: string
-  path: string
-}
-
-type DirListing = {
-  path: string
-  parent: string | null
-  dirs: DirEntry[]
-  files: DirEntry[]
-}
-
-type ToolCall = {
-  id: string
-  name: string
-}
-
-type ChatMessage = {
-  role: string
-  content: string
-  tool_calls: ToolCall[] | null
-  tool_call_id: string | null
-  is_error: boolean
-  created_at: number | null
-}
-
-type LiveTurn = {
-  thinking: string
-  text: string
-  tools: string[]
-}
-
-type SessionList = {
-  sessions: SessionItem[]
-  running_id: string | null
-  model: string
-}
-
-type StreamEvent = {
-  kind?: unknown
-  text?: unknown
-  name?: unknown
-  status?: unknown
-}
-
-type RunNote = {
-  id: string
-  status: string
-}
 
 const POLL_MS = 1000
 const OPEN_SESSION_KEY = "vector-open-session"
@@ -88,235 +59,6 @@ const MODES = [
 
 type ModeId = (typeof MODES)[number]["id"]
 
-function parseSessionList(value: unknown): SessionList | null {
-  if (!value || typeof value !== "object") return null
-  const record = value as Record<string, unknown>
-  if (!Array.isArray(record.sessions)) return null
-  if (record.running_id !== null && typeof record.running_id !== "string") return null
-  const sessions: SessionItem[] = []
-  for (const item of record.sessions) {
-    if (!item || typeof item !== "object") continue
-    const row = item as Record<string, unknown>
-    if (typeof row.id !== "string" || typeof row.title !== "string") continue
-    sessions.push({
-      id: row.id,
-      title: row.title,
-      updated_at: typeof row.updated_at === "number" ? row.updated_at : 0,
-      skill: typeof row.skill === "string" && row.skill !== "" ? row.skill : null,
-      started_at: typeof row.started_at === "number" ? row.started_at : null,
-      duration_ms: typeof row.duration_ms === "number" ? row.duration_ms : null,
-    })
-  }
-  const runningId = record.running_id
-  return {
-    sessions,
-    running_id: typeof runningId === "string" ? runningId : null,
-    model: typeof record.model === "string" ? record.model : "",
-  }
-}
-
-function normalizeTools(value: unknown): ToolCall[] | null {
-  if (value == null) return null
-  if (!Array.isArray(value)) return null
-  const tools: ToolCall[] = []
-  for (const item of value) {
-    if (!item || typeof item !== "object") continue
-    const record = item as Record<string, unknown>
-    tools.push({
-      id: typeof record.id === "string" ? record.id : "",
-      name: typeof record.name === "string" ? record.name : "",
-    })
-  }
-  return tools
-}
-
-function normalizeMessages(value: unknown): ChatMessage[] {
-  if (!Array.isArray(value)) return []
-  const messages: ChatMessage[] = []
-  for (const item of value) {
-    if (!item || typeof item !== "object") continue
-    const record = item as Record<string, unknown>
-    messages.push({
-      role: typeof record.role === "string" ? record.role : "",
-      content: typeof record.content === "string" ? record.content : "",
-      tool_calls: normalizeTools(record.tool_calls),
-      tool_call_id: typeof record.tool_call_id === "string" ? record.tool_call_id : null,
-      is_error: record.is_error === true,
-      created_at: typeof record.created_at === "number" ? record.created_at : null,
-    })
-  }
-  return messages
-}
-
-async function readError(response: Response): Promise<string> {
-  try {
-    const body = (await response.json()) as { error?: unknown }
-    if (typeof body.error === "string") return body.error
-  } catch {
-    // A 4xx without JSON still needs a visible error string.
-  }
-  return "bad_request"
-}
-
-function parseEvent(block: string): StreamEvent | null {
-  const line = block
-    .split("\n")
-    .map((item) => item.trim())
-    .find((item) => item.startsWith("data:"))
-  if (!line) return null
-  try {
-    const value = JSON.parse(line.slice(5).trim()) as unknown
-    if (!value || typeof value !== "object") return null
-    return value as StreamEvent
-  } catch {
-    return null
-  }
-}
-
-async function readEventStream(
-  response: Response,
-  onEvent: (event: StreamEvent) => void,
-): Promise<{ completed: boolean; status: string | null }> {
-  const reader = response.body?.getReader()
-  if (!reader) return { completed: false, status: null }
-  const decoder = new TextDecoder()
-  let buffer = ""
-  let completed = false
-  let status: string | null = null
-
-  const applyBlock = (block: string) => {
-    const event = parseEvent(block)
-    if (!event || typeof event.kind !== "string") return
-    onEvent(event)
-    if (event.kind === "run_result") {
-      completed = true
-      status = typeof event.status === "string" ? event.status : ""
-    }
-  }
-
-  try {
-    while (true) {
-      const { done, value } = await reader.read()
-      if (done) break
-      buffer += decoder.decode(value, { stream: true })
-      const parts = buffer.split("\n\n")
-      buffer = parts.pop() ?? ""
-      for (const part of parts) applyBlock(part)
-    }
-    buffer += decoder.decode()
-    if (buffer.trim()) applyBlock(buffer)
-  } catch {
-    // Dropped before run_result: the caller polls instead of resending.
-  }
-  return { completed, status }
-}
-
-function formatClock(seconds: number): string {
-  const date = new Date(seconds * 1000)
-  const pad = (value: number) => String(value).padStart(2, "0")
-  return `${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`
-}
-
-function formatDuration(ms: number): string {
-  const safe = Math.max(0, Math.round(ms))
-  if (safe < 1000) return `${safe}毫秒`
-  const totalSeconds = Math.round(safe / 1000)
-  const minutes = Math.floor(totalSeconds / 60)
-  const seconds = totalSeconds % 60
-  if (minutes === 0) return `${seconds}秒`
-  return `${minutes}分${String(seconds).padStart(2, "0")}秒`
-}
-
-type SessionMenu = {
-  id: string
-  x: number
-  y: number
-}
-
-function sessionProperties(session: SessionItem, running: boolean, now: number) {
-  if (session.started_at === null) {
-    return { trigger: "还没有运行", duration: "还没有运行" }
-  }
-  const elapsed = running ? Math.max(0, now - session.started_at * 1000) : session.duration_ms
-  return {
-    trigger: formatClock(session.started_at),
-    duration: elapsed === null ? "还在运行" : formatDuration(elapsed),
-  }
-}
-
-function viewedPath(root: string, current: string): string {
-  const sep = current.includes("\\") ? "\\" : "/"
-  const prefix = root.replace(/[\\/]+$/, "") + sep
-  if (current.toLowerCase().startsWith(prefix.toLowerCase())) return current.slice(prefix.length)
-  const name = current.split(/[\\/]/).filter(Boolean).pop()
-  return name || current
-}
-
-function errorLabel(code: string): string {
-  if (code === "busy") return "正在运行"
-  if (code === "not_a_directory") return "不是文件夹"
-  if (code === "unknown_skill") return "没有这个技能"
-  return code
-}
-
-function parseSkills(value: unknown): SkillItem[] {
-  if (!value || typeof value !== "object") return []
-  const record = value as Record<string, unknown>
-  if (!Array.isArray(record.skills)) return []
-  const skills: SkillItem[] = []
-  for (const item of record.skills) {
-    if (!item || typeof item !== "object") continue
-    const row = item as Record<string, unknown>
-    if (typeof row.name !== "string" || typeof row.description !== "string") continue
-    skills.push({ name: row.name, description: row.description })
-  }
-  return skills
-}
-
-function parseEntries(value: unknown): DirEntry[] {
-  if (!Array.isArray(value)) return []
-  const entries: DirEntry[] = []
-  for (const item of value) {
-    if (!item || typeof item !== "object") continue
-    const row = item as Record<string, unknown>
-    if (typeof row.name !== "string" || typeof row.path !== "string") continue
-    entries.push({ name: row.name, path: row.path })
-  }
-  return entries
-}
-
-function parseDirs(value: unknown): DirListing | null {
-  if (!value || typeof value !== "object") return null
-  const record = value as Record<string, unknown>
-  if (typeof record.path !== "string" || !Array.isArray(record.dirs)) return null
-  return {
-    path: record.path,
-    parent: typeof record.parent === "string" ? record.parent : null,
-    dirs: parseEntries(record.dirs),
-    files: parseEntries(record.files),
-  }
-}
-
-function userMessage(text: string): ChatMessage {
-  return {
-    role: "user",
-    content: text,
-    tool_calls: null,
-    tool_call_id: null,
-    is_error: false,
-    created_at: Date.now() / 1000,
-  }
-}
-
-function messageTimeLabel(message: ChatMessage, sentAt: number | null): string | null {
-  if (message.created_at === null) return null
-  if (message.role !== "user" && message.role !== "assistant") return null
-  const clock = formatClock(message.created_at)
-  if (message.role === "assistant" && sentAt !== null) {
-    return `${clock} · 耗时 ${formatDuration((message.created_at - sentAt) * 1000)}`
-  }
-  return clock
-}
 
 export default function App() {
   const [sessions, setSessions] = useState<SessionItem[]>([])
@@ -342,18 +84,51 @@ export default function App() {
   const [skillOpen, setSkillOpen] = useState(false)
   const [now, setNow] = useState(() => Date.now())
   const [sessionMenu, setSessionMenu] = useState<SessionMenu | null>(null)
+  const [entryMenu, setEntryMenu] = useState<EntryMenu | null>(null)
+  const [preview, setPreview] = useState<FilePreview | null>(null)
+  const [renameTarget, setRenameTarget] = useState<(NamedPath & { draft: string }) | null>(null)
+  const [deleteTarget, setDeleteTarget] = useState<NamedPath | null>(null)
   const [propsId, setPropsId] = useState<string | null>(null)
+  const [userMarks, setUserMarks] = useState<{ index: number; top: number; label: string }[]>([])
+  const [activeUser, setActiveUser] = useState<number | null>(null)
+  const [locatedUser, setLocatedUser] = useState<number | null>(null)
+  const [dialogOffset, setDialogOffset] = useState({ x: 0, y: 0 })
+  const [dialogSize, setDialogSize] = useState<{ width: number; height: number } | null>(null)
+  const [sidebarWidth, setSidebarWidth] = useState(220)
+  const [workdirWidth, setWorkdirWidth] = useState(260)
+  const [viewMode, setViewMode] = useState<"chat" | "trace">("chat")
 
   const openIdRef = useRef<string | null>(null)
   const readingStreamRef = useRef(false)
   const sendingRef = useRef(false)
   const streamSessionRef = useRef<string | null>(null)
   const creatingRef = useRef(false)
+  const pendingToolsRef = useRef(0)
+  const resetLiveRef = useRef(false)
   const messagesRef = useRef<ChatMessage[]>([])
   const cacheRef = useRef(new Map<string, ChatMessage[]>())
   const bottomRef = useRef<HTMLDivElement | null>(null)
+  const transcriptRef = useRef<HTMLDivElement | null>(null)
+  const prevOpenIdRef = useRef<string | null>(null)
+  const isNearBottomRef = useRef(true)
+  const locatedTimer = useRef<number | null>(null)
+  const dialogOffsetRef = useRef(dialogOffset)
+  const dialogGesture = useRef<
+    | { kind: "drag"; x: number; y: number; ox: number; oy: number; left: number; top: number }
+    | { kind: "resize"; x: number; y: number; width: number; height: number; left: number; top: number }
+    | null
+  >(null)
+  dialogOffsetRef.current = dialogOffset
+  const panelResizeRef = useRef<{ panel: "sidebar" | "workdir"; startX: number; startWidth: number } | null>(null)
   const menuRef = useRef<HTMLDivElement | null>(null)
+  const entryMenuRef = useRef<HTMLDivElement | null>(null)
+  const viewedPathRef = useRef("")
+  const viewGenerationRef = useRef(0)
+  const pickerOpenRef = useRef(false)
+  const workdirRef = useRef("")
   messagesRef.current = messages
+  pickerOpenRef.current = pickerOpen
+  workdirRef.current = workdir
 
   const refreshList = useCallback(async (): Promise<SessionList | null> => {
     try {
@@ -403,30 +178,51 @@ export default function App() {
     }
   }, [])
 
-  const loadDirs = useCallback(async (path: string, target: "view" | "picker" = "view") => {
+  const loadDirs = useCallback(async (
+    path: string,
+    target: "view" | "picker" = "view",
+    replaceDraft = true,
+  ): Promise<DirListing | null> => {
+    const generation = target === "view" ? (viewGenerationRef.current += 1) : 0
     const query = path === "" ? "" : `?path=${encodeURIComponent(path)}`
     try {
       const response = await fetch(`/api/dirs${query}`, { cache: "no-store" })
       if (!response.ok) {
         const code = response.status >= 400 && response.status < 500 ? await readError(response) : "bad_request"
         if (target === "picker") setPickerError(errorLabel(code))
-        else setErrorText(code)
-        return
+        else if (listingGenerationIsCurrent(generation, viewGenerationRef.current)) setErrorText(code)
+        return null
       }
       const listing = parseDirs(await response.json())
-      if (!listing) return
+      if (!listing) return null
       if (target === "picker") {
         setPickerError(null)
         setPickerBrowse(listing)
         setPathDraft(listing.path)
-        return
+        return listing
       }
+      if (!listingGenerationIsCurrent(generation, viewGenerationRef.current)) return null
+      viewedPathRef.current = viewedPathAfter(viewedPathRef.current, listing.path)
       setBrowse(listing)
-      setPathDraft(listing.path)
+      if (replaceDraft && refreshMayReplaceDraft(pickerOpenRef.current)) setPathDraft(listing.path)
+      return listing
     } catch {
-      setErrorText("bad_request")
+      if (target !== "picker" && listingGenerationIsCurrent(generation, viewGenerationRef.current)) {
+        setErrorText("bad_request")
+      }
+      return null
     }
   }, [])
+
+  useEffect(() => {
+    const timer = window.setInterval(() => {
+      if (pickerOpenRef.current) return
+      const path = viewedPathRef.current || workdirRef.current
+      if (path === "") return
+      void loadDirs(path, "view", refreshMayReplaceDraft(false))
+    }, REFRESH_MS)
+    return () => window.clearInterval(timer)
+  }, [loadDirs])
 
   useEffect(() => {
     void (async () => {
@@ -493,14 +289,235 @@ export default function App() {
   }, [sessionMenu])
 
   useEffect(() => {
+    if (entryMenu === null) return
+    function onPointerDown(event: PointerEvent) {
+      const target = event.target
+      if (target instanceof Node && entryMenuRef.current?.contains(target)) return
+      setEntryMenu(null)
+    }
+    function onKey(event: globalThis.KeyboardEvent) {
+      if (event.key === "Escape") setEntryMenu(null)
+    }
+    window.addEventListener("pointerdown", onPointerDown)
+    window.addEventListener("keydown", onKey)
+    return () => {
+      window.removeEventListener("pointerdown", onPointerDown)
+      window.removeEventListener("keydown", onKey)
+    }
+  }, [entryMenu])
+
+  useEffect(() => {
     if (runningId === null) return
     const timer = window.setInterval(() => setNow(Date.now()), 1000)
     return () => window.clearInterval(timer)
   }, [runningId])
 
   useEffect(() => {
-    bottomRef.current?.scrollIntoView({ block: "end" })
+    const transcript = transcriptRef.current
+    const sessionChanged = prevOpenIdRef.current !== openId
+    prevOpenIdRef.current = openId
+    if (sessionChanged) {
+      isNearBottomRef.current = true
+    }
+    if (!transcript) return
+    if (isNearBottomRef.current) {
+      transcript.scrollTop = transcript.scrollHeight
+    }
   }, [messages, live, openId])
+
+  const dialogKey = pickerOpen
+    ? "picker"
+    : preview
+      ? "preview"
+      : renameTarget
+        ? "rename"
+        : deleteTarget
+          ? "delete"
+          : propsId
+            ? "props"
+            : ""
+
+  useEffect(() => {
+    setDialogOffset({ x: 0, y: 0 })
+    setDialogSize(null)
+  }, [dialogKey])
+
+  useEffect(() => {
+    function onMove(event: PointerEvent) {
+      const drag = panelResizeRef.current
+      if (drag) {
+        const delta = event.clientX - drag.startX
+        if (drag.panel === "sidebar") {
+          setSidebarWidth(clamp(drag.startWidth + delta, 140, 480))
+        } else {
+          setWorkdirWidth(clamp(drag.startWidth - delta, 160, 520))
+        }
+        return
+      }
+      const start = dialogGesture.current
+      if (!start) return
+      if (start.kind === "drag") {
+        const left = clamp(start.left + event.clientX - start.x, 8, window.innerWidth - 48)
+        const top = clamp(start.top + event.clientY - start.y, 8, window.innerHeight - 48)
+        const next = { x: start.ox + left - start.left, y: start.oy + top - start.top }
+        dialogOffsetRef.current = next
+        setDialogOffset(next)
+        return
+      }
+      const width = clamp(start.width + event.clientX - start.x, 260, Math.max(260, window.innerWidth - start.left - 8))
+      const height = clamp(start.height + event.clientY - start.y, 140, Math.max(140, window.innerHeight - start.top - 8))
+      const next = {
+        x: start.left - (window.innerWidth - width) / 2,
+        y: start.top - (window.innerHeight - height) / 2,
+      }
+      dialogOffsetRef.current = next
+      setDialogOffset(next)
+      setDialogSize({ width, height })
+    }
+    function onUp() {
+      panelResizeRef.current = null
+      dialogGesture.current = null
+    }
+    window.addEventListener("pointermove", onMove)
+    window.addEventListener("pointerup", onUp)
+    return () => {
+      window.removeEventListener("pointermove", onMove)
+      window.removeEventListener("pointerup", onUp)
+    }
+  }, [])
+
+  function beginPanelResize(event: ReactPointerEvent<HTMLDivElement>, panel: "sidebar" | "workdir") {
+    event.preventDefault()
+    panelResizeRef.current = {
+      panel,
+      startX: event.clientX,
+      startWidth: panel === "sidebar" ? sidebarWidth : workdirWidth,
+    }
+    event.currentTarget.setPointerCapture(event.pointerId)
+  }
+
+  function beginDialogDrag(event: ReactPointerEvent<HTMLElement>) {
+    if (event.button !== 0) return
+    const dialog = event.currentTarget.closest(".picker-dialog, .props-card")
+    if (!(dialog instanceof HTMLElement)) return
+    const rect = dialog.getBoundingClientRect()
+    const offset = dialogOffsetRef.current
+    dialogGesture.current = {
+      kind: "drag",
+      x: event.clientX,
+      y: event.clientY,
+      ox: offset.x,
+      oy: offset.y,
+      left: rect.left,
+      top: rect.top,
+    }
+    event.currentTarget.setPointerCapture(event.pointerId)
+  }
+
+  function beginDialogResize(event: ReactPointerEvent<HTMLElement>) {
+    if (event.button !== 0) return
+    event.stopPropagation()
+    event.preventDefault()
+    const dialog = event.currentTarget.closest(".picker-dialog, .props-card")
+    if (!(dialog instanceof HTMLElement)) return
+    const rect = dialog.getBoundingClientRect()
+    dialogGesture.current = {
+      kind: "resize",
+      x: event.clientX,
+      y: event.clientY,
+      width: rect.width,
+      height: rect.height,
+      left: rect.left,
+      top: rect.top,
+    }
+    event.currentTarget.setPointerCapture(event.pointerId)
+  }
+
+  function dialogFrame(className: string): { className: string; style: CSSProperties } {
+    const style: CSSProperties = { transform: `translate(${dialogOffset.x}px, ${dialogOffset.y}px)` }
+    if (dialogSize) {
+      style.width = dialogSize.width
+      style.height = dialogSize.height
+    }
+    return { className: dialogSize ? `${className} is-sized` : className, style }
+  }
+
+  useEffect(() => {
+    const root = transcriptRef.current
+    if (!root) return
+    let frame = 0
+    const measure = () => {
+      const nodes = [...root.querySelectorAll<HTMLElement>("[data-user-message]")]
+      const height = root.scrollHeight
+      const rootTop = root.getBoundingClientRect().top
+      const next = nodes.map((node) => {
+        const topPx = node.getBoundingClientRect().top - rootTop + root.scrollTop
+        const raw = height <= 0 ? 0 : (topPx / height) * 100
+        return {
+          index: Number(node.dataset.userMessage),
+          top: Math.min(98, Math.max(1, raw)),
+          label: node.dataset.label ?? "",
+        }
+      })
+      setUserMarks((current) => {
+        if (
+          current.length === next.length &&
+          current.every(
+            (item, index) =>
+              item.index === next[index].index &&
+              item.label === next[index].label &&
+              Math.abs(item.top - next[index].top) < 0.25,
+          )
+        ) {
+          return current
+        }
+        return next
+      })
+      const line = root.scrollTop + 24
+      let active: number | null = null
+      for (const node of nodes) {
+        const topPx = node.getBoundingClientRect().top - rootTop + root.scrollTop
+        if (topPx <= line) active = Number(node.dataset.userMessage)
+      }
+      setActiveUser((current) => (current === active ? current : active))
+    }
+    const schedule = () => {
+      window.cancelAnimationFrame(frame)
+      frame = window.requestAnimationFrame(measure)
+    }
+    schedule()
+    const observer = new ResizeObserver(schedule)
+    observer.observe(root)
+    const column = root.querySelector(".column")
+    if (column) observer.observe(column)
+    const trackBottom = () => {
+      const { scrollTop, scrollHeight, clientHeight } = root
+      isNearBottomRef.current = scrollHeight - scrollTop - clientHeight < 120
+    }
+    root.addEventListener("scroll", schedule, { passive: true })
+    root.addEventListener("scroll", trackBottom, { passive: true })
+    return () => {
+      window.cancelAnimationFrame(frame)
+      observer.disconnect()
+      root.removeEventListener("scroll", schedule)
+      root.removeEventListener("scroll", trackBottom)
+    }
+  }, [messages, live, openId])
+
+  function jumpToUser(index: number) {
+    const root = transcriptRef.current
+    const node = root?.querySelector<HTMLElement>(`[data-user-message="${index}"]`)
+    if (!root || !node) return
+    const top = node.getBoundingClientRect().top - root.getBoundingClientRect().top + root.scrollTop
+    const next = top - root.clientHeight / 2 + node.offsetHeight / 2
+    root.scrollTo({ top: Math.max(0, next), behavior: "smooth" })
+    setLocatedUser(index)
+    if (locatedTimer.current !== null) window.clearTimeout(locatedTimer.current)
+    locatedTimer.current = window.setTimeout(() => {
+      setLocatedUser((current) => (current === index ? null : current))
+      locatedTimer.current = null
+    }, 1400)
+  }
 
   useEffect(() => {
     if (readingStream || runningId === null) return
@@ -513,8 +530,17 @@ export default function App() {
         try {
           const data = await refreshList()
           if (!data || stopped || readingStreamRef.current) return
-          if (data.running_id !== null) return
           const current = openIdRef.current
+          if (data.running_id !== null) {
+            // Run still in progress: reload messages to show real-time tool results
+            if (!current) return
+            const loaded = await fetchSessionMessages(current)
+            if (!readingStreamRef.current && loaded && openIdRef.current === current) {
+              cacheRef.current.set(current, loaded)
+              setMessages(loaded)
+            }
+            return
+          }
           if (!current) {
             setLive(null)
             streamSessionRef.current = null
@@ -573,14 +599,133 @@ export default function App() {
     }
   }
 
+  function refreshListing() {
+    const path = viewedPathRef.current || workdirRef.current
+    if (path === "") return
+    void loadDirs(path, "view", refreshMayReplaceDraft(pickerOpenRef.current))
+  }
+
+  function openEntryMenu(event: MouseEvent<HTMLElement>, kind: EntryKind, name: string, path: string) {
+    event.preventDefault()
+    event.stopPropagation()
+    const labels = entryMenuLabels(kind)
+    const width = 140
+    const height = labels.length * 32 + 12
+    setEntryMenu({
+      kind,
+      name,
+      path,
+      x: Math.max(8, Math.min(event.clientX, window.innerWidth - width - 8)),
+      y: Math.max(8, Math.min(event.clientY, window.innerHeight - height - 8)),
+    })
+  }
+
+  async function openPreview(path: string, name: string) {
+    setEntryMenu(null)
+    try {
+      const response = await fetch(`/api/file?path=${encodeURIComponent(path)}`, { cache: "no-store" })
+      if (!response.ok) {
+        if (response.status >= 400 && response.status < 500) setErrorText(await readError(response))
+        return
+      }
+      const body = (await response.json()) as { kind?: unknown; text?: unknown }
+      const kind = body.kind
+      if (kind !== "text" && kind !== "image" && kind !== "too_large" && kind !== "unsupported") return
+      setPreview({
+        name,
+        path,
+        kind,
+        text: typeof body.text === "string" ? body.text : "",
+      })
+    } catch {
+      setErrorText("bad_request")
+    }
+  }
+
+  function downloadEntry(path: string) {
+    setEntryMenu(null)
+    const link = document.createElement("a")
+    link.href = `/api/file/bytes?path=${encodeURIComponent(path)}`
+    document.body.append(link)
+    link.click()
+    link.remove()
+  }
+
+  async function submitRename() {
+    if (renameTarget === null) return
+    try {
+      const response = await fetch("/api/file/rename", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ path: renameTarget.path, name: renameTarget.draft }),
+      })
+      if (!response.ok) {
+        setErrorText(await readError(response))
+        return
+      }
+      setRenameTarget(null)
+      setErrorText(null)
+      refreshListing()
+    } catch {
+      setErrorText("bad_request")
+    }
+  }
+
+  async function confirmDelete() {
+    if (deleteTarget === null) return
+    try {
+      const response = await fetch("/api/file", {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ path: deleteTarget.path }),
+      })
+      if (!response.ok) {
+        setErrorText(await readError(response))
+        return
+      }
+      setDeleteTarget(null)
+      setErrorText(null)
+      refreshListing()
+    } catch {
+      setErrorText("bad_request")
+    }
+  }
+
+  function chooseEntryAction(label: string, menu: EntryMenu) {
+    if (label === "查看") {
+      void openPreview(menu.path, menu.name)
+      return
+    }
+    if (label === "下载") {
+      downloadEntry(menu.path)
+      return
+    }
+    if (label === "重命名") {
+      setEntryMenu(null)
+      setRenameTarget({ name: menu.name, path: menu.path, draft: menu.name })
+      return
+    }
+    if (label === "删除") {
+      setEntryMenu(null)
+      setDeleteTarget({ name: menu.name, path: menu.path })
+    }
+  }
+
   async function openPicker() {
+    pickerOpenRef.current = true
     setPickerOpen(true)
     setPickerError(null)
     setSkillOpen(false)
-    await loadDirs(workdir, "picker")
+    setPathDraft(workdir)
+    const found = await findListableDir(workdir, async (path) => (await loadDirs(path, "picker")) !== null)
+    if (!found) {
+      setPickerError("不是文件夹")
+      return
+    }
+    if (found.relocated) setPickerError("原来的工作目录已经不在，请另选一个文件夹。")
   }
 
-  async function useDirectory(path: string) {
+  async function chooseDirectory(path: string) {
     if (runningId !== null || readingStreamRef.current) {
       setErrorText("busy")
       return
@@ -704,13 +849,13 @@ export default function App() {
     }
   }
 
-  function appendDelta(kind: "thinking" | "text" | "tool", piece: string) {
+  function appendDelta(kind: "thinking" | "text" | "tool", piece: string, toolArgs?: Record<string, unknown> | null) {
     setLive((prev) => {
       const base = prev ?? { thinking: "", text: "", tools: [] }
       if (kind === "thinking") return { ...base, thinking: base.thinking + piece }
       if (kind === "text") return { ...base, text: base.text + piece }
       if (!piece) return base
-      return { ...base, tools: [...base.tools, piece] }
+      return { ...base, tools: [...base.tools, { name: piece, args: toolArgs ?? null }] }
     })
   }
 
@@ -754,6 +899,9 @@ export default function App() {
     sendingRef.current = true
     readingStreamRef.current = true
     streamSessionRef.current = sessionId
+    pendingToolsRef.current = 0
+    resetLiveRef.current = false
+    prevOpenIdRef.current = null
     setReadingStream(true)
     setDraft("")
     setErrorText(null)
@@ -801,11 +949,38 @@ export default function App() {
 
       const { completed, status } = await readEventStream(response, (event) => {
         if (event.kind === "text_delta" && typeof event.text === "string") {
-          appendDelta("text", event.text)
+          if (resetLiveRef.current) {
+            resetLiveRef.current = false
+            setLive({ thinking: "", text: event.text, tools: [] })
+          } else {
+            appendDelta("text", event.text)
+          }
         } else if (event.kind === "thinking_delta" && typeof event.text === "string") {
-          appendDelta("thinking", event.text)
+          if (resetLiveRef.current) {
+            resetLiveRef.current = false
+            setLive({ thinking: event.text, text: "", tools: [] })
+          } else {
+            appendDelta("thinking", event.text)
+          }
         } else if (event.kind === "tool_call_end" && typeof event.name === "string") {
-          appendDelta("tool", event.name)
+          pendingToolsRef.current += 1
+          const args =
+            event.arguments && typeof event.arguments === "object"
+              ? (event.arguments as Record<string, unknown>)
+              : null
+          appendDelta("tool", event.name, args)
+        } else if (event.kind === "tool_result") {
+          pendingToolsRef.current = Math.max(0, pendingToolsRef.current - 1)
+          if (pendingToolsRef.current === 0) {
+            resetLiveRef.current = true
+            void (async () => {
+              const loaded = await fetchSessionMessages(sessionId)
+              if (loaded && openIdRef.current === sessionId) {
+                cacheRef.current.set(sessionId, loaded)
+                setMessages(loaded)
+              }
+            })()
+          }
         }
       })
 
@@ -886,7 +1061,7 @@ export default function App() {
 
   return (
     <div className="app">
-      <aside className="sidebar">
+      <aside className="sidebar" style={{ width: sidebarWidth }}>
         <div className="brand">Vector Harness</div>
         <button type="button" className="new-session" onClick={() => void createSession()}>
           <span className="plus" aria-hidden="true">
@@ -922,36 +1097,87 @@ export default function App() {
                     {session.title}
                     {session.skill ? <span className="session-skill">{session.skill}</span> : null}
                   </span>
-                  {running ? <span className="running-mark">运行中</span> : null}
+                  {running
+                    ? <span className="running-mark">运行中</span>
+                    : <span className="session-age">{formatRelativeTime(session.updated_at)}</span>
+                  }
                 </button>
               </li>
             )
           })}
         </ul>
       </aside>
+      <div className="panel-resize panel-resize-left" onPointerDown={(e) => beginPanelResize(e, "sidebar")} />
       <main className="main">
         <header className="topbar">
           <div className="title-block">
             <h1 className="current-title">{openSession ? openSession.title : "会话"}</h1>
+            {openSession?.started_at != null ? (
+              <span className="session-start-time">{formatClock(openSession.started_at)}</span>
+            ) : null}
           </div>
         </header>
-        {errorText ? <div className="error-banner">{errorLabel(errorText)}</div> : null}
+        {openId ? (
+          <div className="view-tabs">
+            <button
+              type="button"
+              className={viewMode === "chat" ? "view-tab is-active" : "view-tab"}
+              onClick={() => setViewMode("chat")}
+            >
+              会话
+            </button>
+            <button
+              type="button"
+              className={viewMode === "trace" ? "view-tab is-active" : "view-tab"}
+              onClick={() => setViewMode("trace")}
+            >
+              轨迹
+            </button>
+          </div>
+        ) : null}
+        {errorText ? (
+          <div className="error-banner">
+            <span className="error-banner-icon" aria-hidden="true">✕</span>
+            {errorLabel(errorText)}
+          </div>
+        ) : null}
         {listReady && sessions.length === 0 ? (
           <div className="empty">先新建</div>
         ) : (
           <>
-            <div className="transcript">
+            <div className="transcript-wrap">
+            {viewMode === "trace" ? (
+              <TraceView messages={messages} live={showLive ? live : null} />
+            ) : (
+            <div className="transcript" ref={transcriptRef}>
               <div className="column">
-                {openId ? (
-                  messages.map((message, index) => {
+                {openId ? (() => {
+                  const SILENT_TOOLS = new Set(["update_todos", "submit_verdict"])
+                  const toolCallNames = new Map<string, string>()
+                  for (const msg of messages) {
+                    for (const call of msg.tool_calls ?? []) {
+                      if (call.id) toolCallNames.set(call.id, call.name)
+                    }
+                  }
+                  return messages.map((message, index) => {
+                    const hasContent = message.content.trim() !== ""
+                    const hasToolCalls = (message.tool_calls?.filter((c) => c.name !== "").length ?? 0) > 0
+                    if (!hasContent && !hasToolCalls) return null
+                    if (message.role === "tool" && message.tool_call_id) {
+                      const calledName = toolCallNames.get(message.tool_call_id)
+                      if (calledName && SILENT_TOOLS.has(calledName) && !message.is_error) return null
+                    }
                     const sentAt = [...messages.slice(0, index)]
                       .reverse()
                       .find((item) => item.role === "user" && item.created_at !== null)?.created_at ?? null
                     const timeLabel = messageTimeLabel(message, sentAt)
+                    const isUser = message.role === "user"
                     return (
                       <article
                         key={`${index}-${message.role}`}
-                        className={`message-row ${message.role}${message.is_error ? " is-error" : ""}`}
+                        className={`message-row ${message.role}${message.is_error ? " is-error" : ""}${locatedUser === index ? " is-located" : ""}`}
+                        data-user-message={isUser ? index : undefined}
+                        data-label={isUser ? userPreview(message.content) : undefined}
                       >
                         <div className="message-stack">
                           <div className="bubble">
@@ -960,21 +1186,42 @@ export default function App() {
                             ) : null}
                             {message.role === "tool" ? (
                               <pre className="tool-output">{message.content}</pre>
-                            ) : (
-                              <Markdown text={message.content} />
-                            )}
-                            {message.tool_calls?.map((call, callIndex) => (
-                              <div key={`${call.id}-${callIndex}`} className="tool-name">
-                                {call.name}
-                              </div>
-                            ))}
+                            ) : (() => {
+                              const reflection = parseReflection(message.content)
+                              if (reflection) return <ReflectionCard pass={reflection.pass} text={reflection.text} />
+                              return <Markdown text={message.content} />
+                            })()}
+                            {message.tool_calls?.map((call, callIndex) => {
+                              if (!call.name) return null
+                              if (call.name === "update_todos" && Array.isArray(call.args?.todos)) {
+                                const todos = call.args!.todos as TodoItem[]
+                                return <TodoList key={`${call.id}-${callIndex}`} todos={todos} />
+                              }
+                              if (call.name === "submit_verdict") {
+                                const pass = call.args?.pass === true
+                                return (
+                                  <div key={`${call.id}-${callIndex}`} className={`verdict-pill ${pass ? "pass" : "fail"}`}>
+                                    {pass ? "✓ 反思通过" : "✗ 反思未通过"}
+                                  </div>
+                                )
+                              }
+                              const summary = toolSummary(call.name, call.args)
+                              return (
+                                <div key={`${call.id}-${callIndex}`} className="tool-name">
+                                  <span className="tool-name-label">{call.name}</span>
+                                  {summary ? (
+                                    <span className="tool-name-arg">{summary.length > 80 ? summary.slice(0, 80) + "…" : summary}</span>
+                                  ) : null}
+                                </div>
+                              )
+                            })}
                           </div>
                           {timeLabel ? <div className="message-time">{timeLabel}</div> : null}
                         </div>
                       </article>
                     )
                   })
-                ) : (
+                })() : (
                   <div className="pick">从左侧打开一个会话</div>
                 )}
                 {showLive && live ? (
@@ -982,16 +1229,33 @@ export default function App() {
                     <div className="message-stack">
                       <div className="bubble">
                         {live.thinking ? (
-                          <div className="thinking">
-                            <Markdown text={live.thinking} />
-                          </div>
+                          <ThinkingBlock text={live.thinking} streaming={readingStream} />
                         ) : null}
                         <Markdown text={live.text} />
-                        {live.tools.map((name, index) => (
-                          <div key={`${name}-${index}`} className="tool-name">
-                            {name}
-                          </div>
-                        ))}
+                        {live.tools.map((tool, index) => {
+                          if (!tool.name) return null
+                          if (tool.name === "update_todos" && Array.isArray(tool.args?.todos)) {
+                            const todos = tool.args!.todos as TodoItem[]
+                            return <TodoList key={`${tool.name}-${index}`} todos={todos} />
+                          }
+                          if (tool.name === "submit_verdict") {
+                            const pass = tool.args?.pass === true
+                            return (
+                              <div key={`${tool.name}-${index}`} className={`verdict-pill ${pass ? "pass" : "fail"}`}>
+                                {pass ? "✓ 反思通过" : "✗ 反思未通过"}
+                              </div>
+                            )
+                          }
+                          const summary = toolSummary(tool.name, tool.args)
+                          return (
+                            <div key={`${tool.name}-${index}`} className="tool-name">
+                              <span className="tool-name-label">{tool.name}</span>
+                              {summary ? (
+                                <span className="tool-name-arg">{summary.length > 80 ? summary.slice(0, 80) + "…" : summary}</span>
+                              ) : null}
+                            </div>
+                          )
+                        })}
                       </div>
                       {liveTiming ? <div className="message-time">{liveTiming}</div> : null}
                     </div>
@@ -1000,9 +1264,27 @@ export default function App() {
                 <div ref={bottomRef} />
               </div>
             </div>
+            )}
+            {userMarks.length > 0 ? (
+              <div className="user-rail" aria-label="用户输入">
+                {userMarks.map((mark) => (
+                  <button
+                    key={mark.index}
+                    type="button"
+                    className={mark.index === activeUser ? "user-mark is-active" : "user-mark"}
+                    style={{ top: `${mark.top}%` }}
+                    data-label={mark.label}
+                    title={mark.label}
+                    aria-label={mark.label === "" ? "用户输入" : mark.label}
+                    onClick={() => jumpToUser(mark.index)}
+                  />
+                ))}
+              </div>
+            ) : null}
+            </div>
             {visibleStatus ? (
               <div className="status-wrap">
-                <div className="status-banner">{visibleStatus === "stopped" ? "已停止" : visibleStatus}</div>
+                <StatusNote status={visibleStatus} />
               </div>
             ) : null}
             {openId ? (
@@ -1097,17 +1379,37 @@ export default function App() {
           </>
         )}
       </main>
-      <aside className="workdir-panel">
-        <button
-          type="button"
-          className="workdir-button"
-          title={workdir}
-          disabled={inputLocked}
-          onClick={() => void openPicker()}
-        >
-          <span className="workdir-kicker">工作目录</span>
-          <span className="workdir-path">{workdir || "选择目录"}</span>
-        </button>
+      <div className="panel-resize panel-resize-right" onPointerDown={(e) => beginPanelResize(e, "workdir")} />
+      <aside className="workdir-panel" style={{ width: workdirWidth }}>
+        <div className="workdir-card">
+          <div className="workdir-head">
+            <span className="workdir-kicker">工作目录</span>
+            <button type="button" className="workdir-refresh" aria-label="刷新" title="刷新" onClick={() => refreshListing()}>
+              <svg viewBox="0 0 16 16" aria-hidden="true">
+                <path d="M2.6 8a5.4 5.4 0 0 1 9.1-4" />
+                <path d="M11.7 2.4v3.1H8.6" />
+                <path d="M13.4 8a5.4 5.4 0 0 1-9.1 4" />
+                <path d="M4.3 13.6V10.5H7.4" />
+              </svg>
+            </button>
+          </div>
+          <button
+            type="button"
+            className="workdir-button"
+            title={workdir}
+            disabled={inputLocked}
+            onClick={() => void openPicker()}
+          >
+            {workdir ? (
+              <>
+                <span className="workdir-dirname">{workdir.split(/[/\\]/).filter(Boolean).pop() ?? workdir}</span>
+                <span className="workdir-path">{workdir}</span>
+              </>
+            ) : (
+              <span className="workdir-path">选择目录</span>
+            )}
+          </button>
+        </div>
         {viewed && browse ? (
           <div className="viewed-path" title={browse.path}>
             {viewed}
@@ -1124,14 +1426,24 @@ export default function App() {
             ) : null}
             {browse.dirs.map((dir) => (
               <li key={dir.path} className="is-dir">
-                <button type="button" onClick={() => void loadDirs(dir.path)}>
+                <button
+                  type="button"
+                  onClick={() => void loadDirs(dir.path)}
+                  onContextMenu={(event) => openEntryMenu(event, "dir", dir.name, dir.path)}
+                >
                   {dir.name}
                 </button>
               </li>
             ))}
             {browse.files.map((file) => (
               <li key={file.path} className="is-file">
-                <span>{file.name}</span>
+                <button
+                  type="button"
+                  onClick={() => void openPreview(file.path, file.name)}
+                  onContextMenu={(event) => openEntryMenu(event, "file", file.name, file.path)}
+                >
+                  {file.name}
+                </button>
               </li>
             ))}
             {browse.dirs.length === 0 && browse.files.length === 0 ? (
@@ -1140,15 +1452,15 @@ export default function App() {
           </ul>
         ) : null}
       </aside>
-      {pickerOpen && pickerBrowse ? (
+      {shouldShowPicker(pickerOpen, pickerBrowse !== null) ? (
         <div className="props-backdrop" onClick={() => setPickerOpen(false)}>
           <div
-            className="picker-dialog"
+            {...dialogFrame("picker-dialog")}
             role="dialog"
             aria-label="选择工作目录"
             onClick={(event) => event.stopPropagation()}
           >
-            <div className="props-heading">选择工作目录</div>
+            <div className="props-heading" onPointerDown={beginDialogDrag}>选择工作目录</div>
             <form
               className="dir-jump"
               onSubmit={(event) => {
@@ -1165,30 +1477,149 @@ export default function App() {
             </form>
             {pickerError ? <div className="picker-error">{pickerError}</div> : null}
             <ul className="dir-list picker-list" aria-label="可选目录">
-              {pickerBrowse.parent ? (
+              {pickerBrowse?.parent ? (
                 <li className="is-up">
                   <button type="button" onClick={() => pickerBrowse.parent && void loadDirs(pickerBrowse.parent, "picker")}>
                     ..
                   </button>
                 </li>
               ) : null}
-              {pickerBrowse.dirs.map((dir) => (
-                <li key={dir.path} className="is-dir">
-                  <button type="button" onClick={() => void loadDirs(dir.path, "picker")}>
-                    {dir.name}
-                  </button>
-                </li>
-              ))}
-              {pickerBrowse.dirs.length === 0 ? <li className="is-empty">没有子文件夹</li> : null}
+              {pickerBrowse
+                ? pickerBrowse.dirs.map((dir) => (
+                    <li key={dir.path} className="is-dir">
+                      <button type="button" onClick={() => void loadDirs(dir.path, "picker")}>
+                        {dir.name}
+                      </button>
+                    </li>
+                  ))
+                : null}
+              {pickerBrowse && pickerBrowse.dirs.length === 0 ? <li className="is-empty">没有子文件夹</li> : null}
+              {!pickerBrowse ? <li className="is-empty">{pickerError ? "没有可显示的文件夹" : "正在读取"}</li> : null}
             </ul>
             <div className="dir-actions">
               <button type="button" onClick={() => setPickerOpen(false)}>
                 取消
               </button>
-              <button type="button" onClick={() => void useDirectory(pickerBrowse.path)}>
+              <button
+                type="button"
+                disabled={pickerBrowse === null}
+                onClick={() => {
+                  if (pickerBrowse === null) return
+                  void chooseDirectory(pickerBrowse.path)
+                }}
+              >
                 使用此目录
               </button>
             </div>
+            <div className="dialog-resize" onPointerDown={beginDialogResize} />
+          </div>
+        </div>
+      ) : null}
+      {entryMenu ? (
+        <div
+          ref={entryMenuRef}
+          className="session-menu"
+          role="menu"
+          style={{ left: entryMenu.x, top: entryMenu.y }}
+        >
+          {entryMenuLabels(entryMenu.kind).map((label) => (
+            <button key={label} type="button" role="menuitem" onClick={() => chooseEntryAction(label, entryMenu)}>
+              {label}
+            </button>
+          ))}
+        </div>
+      ) : null}
+      {preview ? (
+        <div className="props-backdrop" onClick={() => setPreview(null)}>
+          <div
+            {...dialogFrame("picker-dialog file-preview")}
+            role="dialog"
+            aria-label="查看文件"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <div className="props-heading" onPointerDown={beginDialogDrag}>{preview.name}</div>
+            {preview.kind === "text" ? (
+              <pre className="preview-text">
+                {highlightCode(preview.text, preview.name).map((token, index) =>
+                  token.kind === "plain" ? (
+                    token.text
+                  ) : (
+                    <span key={index} className={`tok-${token.kind}`}>
+                      {token.text}
+                    </span>
+                  ),
+                )}
+              </pre>
+            ) : null}
+            {preview.kind === "image" ? (
+              <img
+                className="preview-image"
+                alt={preview.name}
+                src={`/api/file/bytes?path=${encodeURIComponent(preview.path)}&inline=1`}
+              />
+            ) : null}
+            {preview.kind === "too_large" ? <p className="picker-error">这个文件超过 2MB，不能预览</p> : null}
+            {preview.kind === "unsupported" ? <p className="picker-error">这个文件不能预览</p> : null}
+            <div className="dir-actions">
+              <button type="button" onClick={() => setPreview(null)}>
+                取消
+              </button>
+              <button type="button" onClick={() => downloadEntry(preview.path)}>
+                下载
+              </button>
+            </div>
+            <div className="dialog-resize" onPointerDown={beginDialogResize} />
+          </div>
+        </div>
+      ) : null}
+      {renameTarget ? (
+        <div className="props-backdrop" onClick={() => setRenameTarget(null)}>
+          <form
+            {...dialogFrame("picker-dialog")}
+            aria-label="重命名"
+            onClick={(event) => event.stopPropagation()}
+            onSubmit={(event) => {
+              event.preventDefault()
+              void submitRename()
+            }}
+          >
+            <div className="props-heading" onPointerDown={beginDialogDrag}>重命名</div>
+            <input
+              className="rename-input"
+              aria-label="新名称"
+              value={renameTarget.draft}
+              onChange={(event) =>
+                setRenameTarget((current) => (current ? { ...current, draft: event.target.value } : current))
+              }
+            />
+            <div className="dir-actions">
+              <button type="button" onClick={() => setRenameTarget(null)}>
+                取消
+              </button>
+              <button type="submit">确定</button>
+            </div>
+            <div className="dialog-resize" onPointerDown={beginDialogResize} />
+          </form>
+        </div>
+      ) : null}
+      {deleteTarget ? (
+        <div className="props-backdrop" onClick={() => setDeleteTarget(null)}>
+          <div
+            {...dialogFrame("picker-dialog")}
+            role="dialog"
+            aria-label="删除"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <div className="props-heading" onPointerDown={beginDialogDrag}>删除 {deleteTarget.name}？</div>
+            <div className="dir-actions">
+              <button type="button" onClick={() => setDeleteTarget(null)}>
+                取消
+              </button>
+              <button type="button" onClick={() => void confirmDelete()}>
+                删除
+              </button>
+            </div>
+            <div className="dialog-resize" onPointerDown={beginDialogResize} />
           </div>
         </div>
       ) : null}
@@ -1228,12 +1659,12 @@ export default function App() {
           }}
         >
           <div
-            className="props-card"
+            {...dialogFrame("props-card")}
             role="dialog"
             aria-label="会话属性"
             onClick={(event) => event.stopPropagation()}
           >
-            <div className="props-heading">属性</div>
+            <div className="props-heading" onPointerDown={beginDialogDrag}>属性</div>
             <dl>
               <dt>标题</dt>
               <dd>{propsSession.title}</dd>
@@ -1247,6 +1678,7 @@ export default function App() {
             <button type="button" className="props-close" onClick={() => setPropsId(null)}>
               关闭
             </button>
+            <div className="dialog-resize" onPointerDown={beginDialogResize} />
           </div>
         </div>
       ) : null}

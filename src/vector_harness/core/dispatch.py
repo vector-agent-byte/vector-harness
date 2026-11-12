@@ -6,10 +6,14 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
+
 from vector_harness.core.session import Session
 from vector_harness.types import (
     INVALID_TOOL_ARGUMENTS,
+    EventKind,
     Message,
+    ProviderEvent,
     Role,
     Tool,
     ToolCall,
@@ -35,10 +39,12 @@ class ToolDispatcher:
         session: Session,
         tools: list[Tool],
         hooks: list[ToolHook] | None,
+        on_event: Callable[[ProviderEvent], None] | None = None,
     ) -> None:
         self.session = session
         self.tools = tools
         self.hooks = hooks or []
+        self.on_event = on_event
 
     async def dispatch(self, tool_calls: list[ToolCall]) -> None:
         """按调用顺序执行。同名工具以后登记的为准。"""
@@ -57,6 +63,13 @@ class ToolDispatcher:
                 output = await tool_map[current.name].execute(current.arguments)
             except Exception as exc:
                 self._append_error(current, str(exc))
+                if self.on_event is not None:
+                    self.on_event(ProviderEvent(
+                        kind=EventKind.TOOL_RESULT,
+                        text=str(exc),
+                        tool_call_id=current.id,
+                        name="error",
+                    ))
             else:
                 self.session.append(
                     Message(
@@ -66,6 +79,12 @@ class ToolDispatcher:
                         is_error=False,
                     )
                 )
+                if self.on_event is not None:
+                    self.on_event(ProviderEvent(
+                        kind=EventKind.TOOL_RESULT,
+                        text=output,
+                        tool_call_id=current.id,
+                    ))
 
     def _append_error(self, call: ToolCall, content: str) -> None:
         self.session.append(

@@ -36,6 +36,7 @@ class EventKind(StrEnum):
     TEXT_DELTA = "text_delta"
     TOOL_CALL_START = "tool_call_start"
     TOOL_CALL_END = "tool_call_end"
+    TOOL_RESULT = "tool_result"
     RUN_END = "run_end"
 
 

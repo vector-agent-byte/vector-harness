@@ -84,7 +84,7 @@ def test_build_agent_without_patterns_is_a_plain_loop(tmp_path: Path):
 def test_build_agent_wires_all_five_patterns(tmp_path: Path):
     from vector_harness.cli import build_agent
     from vector_harness.core.session import Session
-    from vector_harness.patterns.plan import PlanThenExecute
+    from vector_harness.patterns.plan import TodoPlan
 
     workspace = tmp_path / "ws"
     workspace.mkdir()
@@ -106,7 +106,7 @@ def test_build_agent_wires_all_five_patterns(tmp_path: Path):
         plan=True,
         subagents=True,
     )
-    assert type(agent) is PlanThenExecute
+    assert type(agent) is TodoPlan
     assert [tool.name for tool in agent.loop.tools] == [
         "read_file",
         "edit_file",
@@ -114,6 +114,7 @@ def test_build_agent_wires_all_five_patterns(tmp_path: Path):
         "read_skill",
         "remember",
         "delegate",
+        "update_todos",
     ]
     system = agent.loop.system
     assert system.index("skillalpha") < system.index("memorybeta sentence")
@@ -186,7 +187,7 @@ def test_config_file_supplies_connection_settings(tmp_path: Path, monkeypatch):
         return ScriptedProvider(turns=[ScriptedTurn(content="ok")])
 
     monkeypatch.setattr(
-        "vector_harness.cli.OpenAICompatibleProvider.from_env", fake_from_env
+        "vector_harness.bootstrap.OpenAICompatibleProvider.from_env", fake_from_env
     )
     workspace = tmp_path / "ws"
     workspace.mkdir()
@@ -215,7 +216,7 @@ def test_env_and_cli_override_config_file(tmp_path: Path, monkeypatch):
         return ScriptedProvider(turns=[ScriptedTurn(content="ok")])
 
     monkeypatch.setattr(
-        "vector_harness.cli.OpenAICompatibleProvider.from_env", fake_from_env
+        "vector_harness.bootstrap.OpenAICompatibleProvider.from_env", fake_from_env
     )
     workspace = tmp_path / "ws"
     workspace.mkdir()
@@ -341,7 +342,7 @@ def test_shell_command_is_printed_before_execute(tmp_path: Path, monkeypatch):
             seen["before"] = buffer.getvalue()
             return "ok"
 
-    monkeypatch.setattr("vector_harness.cli.Shell", ProbeShell)
+    monkeypatch.setattr("vector_harness.bootstrap.Shell", ProbeShell)
     provider = ScriptedProvider(
         turns=[
             ScriptedTurn(
@@ -583,7 +584,7 @@ def test_plan_and_child_events_reach_the_same_callback(tmp_path: Path, monkeypat
             assert ends
             assert ends[0].arguments["command"] == "echo hi"
             assert any(
-                event.kind == "text_delta" and event.text == '{"steps":["run"]}'
+                event.kind == "tool_call_end" and event.name == "update_todos"
                 for event in seen
             )
             child_calls = [
@@ -595,10 +596,20 @@ def test_plan_and_child_events_reach_the_same_callback(tmp_path: Path, monkeypat
             saw_shell = True
             return "ok"
 
-    monkeypatch.setattr("vector_harness.cli.Shell", ProbeShell)
+    monkeypatch.setattr("vector_harness.bootstrap.Shell", ProbeShell)
     provider = ScriptedProvider(
         turns=[
-            ScriptedTurn(content='{"steps":["run"]}'),
+            ScriptedTurn(
+                tool_calls=[
+                    ToolCall(
+                        id="t1",
+                        name="update_todos",
+                        arguments={
+                            "todos": [{"id": 1, "content": "run", "status": "completed"}]
+                        },
+                    )
+                ]
+            ),
             ScriptedTurn(
                 tool_calls=[
                     ToolCall(

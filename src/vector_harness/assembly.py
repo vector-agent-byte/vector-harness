@@ -109,15 +109,15 @@ def attach(
 
 def _rewrap(loop: Loop, runner: Runnable, *, plan: bool, reflect: bool) -> Runnable:
     """需要计划或反思时，从工具循环重新包一层。两个都不要时保持原运行对象。"""
-    from vector_harness.patterns.plan import PlanThenExecute
-    from vector_harness.patterns.reflect import Reflect
+    from vector_harness.patterns.plan import TodoPlan
+    from vector_harness.patterns.reflect import ToolReflect
 
     if not plan and not reflect:
         return runner
-    has_reflect = isinstance(runner, Reflect)
+    has_reflect = isinstance(runner, ToolReflect)
     inner = runner.inner if has_reflect else runner
-    has_plan = isinstance(inner, PlanThenExecute)
-    wrapped: Runnable = PlanThenExecute(loop) if plan or has_plan else loop
+    has_plan = isinstance(inner, TodoPlan)
+    wrapped: Runnable = TodoPlan(loop) if plan or has_plan else loop
     if reflect or has_reflect:
-        return Reflect(wrapped)
+        return ToolReflect(wrapped)
     return wrapped

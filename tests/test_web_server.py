@@ -1,6 +1,8 @@
 import asyncio
+import os
 import socket
 import struct
+import subprocess
 import sys
 import threading
 import time
@@ -23,7 +25,11 @@ def _drop_web_modules():
         if name in {
             "vector_harness.web",
             "vector_harness.web_server",
+            "vector_harness.web_http",
+            "vector_harness.web_files",
+            "vector_harness.web_runs",
             "vector_harness.web_sessions",
+            "vector_harness.bootstrap",
             "vector_harness.cli",
             "vector_harness.assembly",
         } or name == "vector_harness.patterns" or name.startswith(
@@ -196,7 +202,6 @@ def test_plan_flag_uses_the_plan_system_before_the_answer(tmp_path: Path):
     session_id = create_session(tmp_path)
     provider = ScriptedProvider(
         turns=[
-            ScriptedTurn(content='{"steps": ["look"]}'),
             ScriptedTurn(content="做完了"),
         ]
     )
@@ -210,7 +215,7 @@ def test_plan_flag_uses_the_plan_system_before_the_answer(tmp_path: Path):
             )
         assert response.status_code == 200
         assert '"status": "complete"' in response.text
-        assert provider.calls[0]["system"] == 'Reply with JSON only, of the form {"steps": ["..."]}.'
+        assert "update_todos" in provider.calls[0]["tools"]
         stored = (tmp_path / ".vector" / "sessions" / f"{session_id}.jsonl").read_text(encoding="utf-8")
         assert "做完了" in stored
     finally:
@@ -221,7 +226,6 @@ def test_page_mode_overrides_the_startup_flags(tmp_path: Path):
     session_id = create_session(tmp_path)
     provider = ScriptedProvider(
         turns=[
-            ScriptedTurn(content='{"steps": ["look"]}'),
             ScriptedTurn(content="做完了"),
         ]
     )
@@ -234,7 +238,7 @@ def test_page_mode_overrides_the_startup_flags(tmp_path: Path):
                 json={"text": "去做", "mode": "plan"},
             )
         assert response.status_code == 200
-        assert provider.calls[0]["system"] == 'Reply with JSON only, of the form {"steps": ["..."]}.'
+        assert "update_todos" in provider.calls[0]["tools"]
     finally:
         server.shutdown()
 
@@ -257,11 +261,21 @@ def test_react_mode_skips_plan_even_when_the_server_started_with_it(tmp_path: Pa
 
 
 def test_reflect_mode_asks_for_a_critique_after_the_answer(tmp_path: Path):
+    from vector_harness import ToolCall
+
     session_id = create_session(tmp_path)
     provider = ScriptedProvider(
         turns=[
             ScriptedTurn(content="初稿"),
-            ScriptedTurn(content='{"ok": true}'),
+            ScriptedTurn(
+                tool_calls=[
+                    ToolCall(
+                        id="v1",
+                        name="submit_verdict",
+                        arguments={"pass": True, "critique": "通过"},
+                    )
+                ]
+            ),
         ]
     )
     server = WebServer(WebSettings(workspace=tmp_path), provider)
@@ -274,7 +288,7 @@ def test_reflect_mode_asks_for_a_critique_after_the_answer(tmp_path: Path):
             )
         assert response.status_code == 200
         assert provider.calls[0]["system"] == DEFAULT_SYSTEM
-        assert provider.calls[1]["system"].startswith("Reply with JSON only")
+        assert "submit_verdict" in provider.calls[1]["tools"]
     finally:
         server.shutdown()
 
@@ -753,5 +767,236 @@ def test_a_turn_records_when_it_started_and_how_long_it_took(tmp_path: Path):
         assert isinstance(duration, int) and duration >= 0
         assert body["started_at"] == started
         assert body["duration_ms"] == duration
+    finally:
+        server.shutdown()
+
+
+def test_file_preview_and_image_inline(tmp_path: Path):
+    notes = tmp_path / "notes.txt"
+    notes.write_text("你好", encoding="utf-8")
+    image = tmp_path / "pic.png"
+    image.write_bytes(b"\x89PNG\r\n")
+    server = WebServer(WebSettings(workspace=tmp_path), provider=object())
+    server.start()
+    try:
+        base = f"http://127.0.0.1:{server.port}"
+        with httpx.Client(trust_env=False) as client:
+            text = client.get(f"{base}/api/file", params={"path": str(notes)})
+            assert text.status_code == 200
+            assert text.json()["kind"] == "text"
+            assert text.json()["text"] == "你好"
+            meta = client.get(f"{base}/api/file", params={"path": str(image)})
+            assert meta.json()["kind"] == "image"
+            assert meta.json()["media_type"] == "image/png"
+            inline = client.get(f"{base}/api/file/bytes", params={"path": str(image), "inline": "1"})
+            assert inline.status_code == 200
+            assert inline.headers["content-type"].startswith("image/png")
+            assert inline.content == b"\x89PNG\r\n"
+            assert "attachment" not in inline.headers.get("content-disposition", "")
+    finally:
+        server.shutdown()
+
+
+def test_oversize_image_downloads_but_does_not_inline(tmp_path: Path):
+    image = tmp_path / "big.png"
+    image.write_bytes(b"x" * (2 * 1024 * 1024 + 1))
+    server = WebServer(WebSettings(workspace=tmp_path), provider=object())
+    server.start()
+    try:
+        base = f"http://127.0.0.1:{server.port}"
+        with httpx.Client(trust_env=False) as client:
+            meta = client.get(f"{base}/api/file", params={"path": str(image)})
+            assert meta.json()["kind"] == "too_large"
+            inline = client.get(f"{base}/api/file/bytes", params={"path": str(image), "inline": "1"})
+            assert inline.status_code == 413
+            assert inline.json() == {"error": "too_large"}
+            saved = client.get(f"{base}/api/file/bytes", params={"path": str(image)})
+            assert saved.status_code == 200
+            assert saved.content == b"x" * (2 * 1024 * 1024 + 1)
+            assert "attachment" in saved.headers["content-disposition"].lower()
+    finally:
+        server.shutdown()
+
+
+def test_directory_and_other_file_are_not_preview_bytes(tmp_path: Path):
+    (tmp_path / "data.bin").write_bytes(b"\x00\x01")
+    server = WebServer(WebSettings(workspace=tmp_path), provider=object())
+    server.start()
+    try:
+        base = f"http://127.0.0.1:{server.port}"
+        with httpx.Client(trust_env=False) as client:
+            folder = client.get(f"{base}/api/file", params={"path": str(tmp_path)})
+            assert folder.status_code == 400
+            assert folder.json() == {"error": "not_a_file"}
+            other = client.get(f"{base}/api/file", params={"path": str(tmp_path / "data.bin")})
+            assert other.json()["kind"] == "unsupported"
+            missing = client.get(f"{base}/api/file", params={"path": str(tmp_path / "nope.txt")})
+            assert missing.status_code == 404
+    finally:
+        server.shutdown()
+
+
+def test_rename_rejects_unsafe_names_and_moves_a_file(tmp_path: Path):
+    source = tmp_path / "old.txt"
+    source.write_text("x", encoding="utf-8")
+    server = WebServer(WebSettings(workspace=tmp_path), provider=object())
+    server.start()
+    try:
+        base = f"http://127.0.0.1:{server.port}"
+        with httpx.Client(trust_env=False) as client:
+            for name in ("../x", "a/b", "a\\b", "", ".", ".."):
+                rejected = client.post(f"{base}/api/file/rename", json={"path": str(source), "name": name})
+                assert rejected.status_code == 400
+                assert rejected.json() == {"error": "bad_name"}
+            assert source.is_file()
+            moved = client.post(f"{base}/api/file/rename", json={"path": str(source), "name": "new.txt"})
+            assert moved.status_code == 200
+            assert moved.json()["name"] == "new.txt"
+            assert (tmp_path / "new.txt").read_text(encoding="utf-8") == "x"
+            nested = tmp_path / "nested"
+            nested.mkdir()
+            renamed_dir = client.post(f"{base}/api/file/rename", json={"path": str(nested), "name": "moved"})
+            assert renamed_dir.status_code == 200
+            assert (tmp_path / "moved").is_dir()
+            again = client.post(
+                f"{base}/api/file/rename",
+                json={"path": str(tmp_path / "new.txt"), "name": "new.txt"},
+            )
+            assert again.status_code == 409
+            for name in ("C:evil.txt", "foo:bar", "....", ".. "):
+                escaped = client.post(
+                    f"{base}/api/file/rename",
+                    json={"path": str(tmp_path / "new.txt"), "name": name},
+                )
+                assert escaped.status_code == 400
+                assert escaped.json() == {"error": "bad_name"}
+            assert (tmp_path / "new.txt").is_file()
+    finally:
+        server.shutdown()
+
+
+def test_delete_tree_symlink_and_root(tmp_path: Path):
+    folder = tmp_path / "folder"
+    folder.mkdir()
+    (folder / "inside.txt").write_text("x", encoding="utf-8")
+    target = tmp_path / "target"
+    target.mkdir()
+    (target / "keep.txt").write_text("keep", encoding="utf-8")
+    link = tmp_path / "link"
+    link_ready = True
+    try:
+        link.symlink_to(target, target_is_directory=True)
+    except OSError:
+        link_ready = False
+    server = WebServer(WebSettings(workspace=tmp_path), provider=object())
+    server.start()
+    try:
+        base = f"http://127.0.0.1:{server.port}"
+        with httpx.Client(trust_env=False) as client:
+            if link_ready:
+                removed_link = client.request("DELETE", f"{base}/api/file", json={"path": str(link)})
+                assert removed_link.status_code == 200
+                assert not link.exists()
+                assert (target / "keep.txt").read_text(encoding="utf-8") == "keep"
+            removed = client.request("DELETE", f"{base}/api/file", json={"path": str(folder)})
+            assert removed.status_code == 200
+            assert not folder.exists()
+            root = client.request("DELETE", f"{base}/api/file", json={"path": str(Path(tmp_path.anchor))})
+            assert root.status_code == 400
+            assert root.json() == {"error": "bad_path"}
+            assert Path(tmp_path.anchor).exists()
+    finally:
+        server.shutdown()
+
+
+def _make_directory_link(link: Path, target: Path) -> None:
+    if os.name == "nt":
+        completed = subprocess.run(
+            ["cmd", "/c", "mklink", "/J", str(link), str(target)],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        if completed.returncode != 0:
+            pytest.skip(completed.stderr.strip() or completed.stdout.strip() or "mklink failed")
+        return
+    try:
+        link.symlink_to(target, target_is_directory=True)
+    except OSError as exc:
+        pytest.skip(str(exc))
+
+
+def test_listed_directory_link_does_not_follow_on_delete_or_rename(tmp_path: Path):
+    target = tmp_path / "target"
+    target.mkdir()
+    (target / "keep.txt").write_text("keep", encoding="utf-8")
+    link = tmp_path / "link"
+    other = tmp_path / "other"
+    _make_directory_link(link, target)
+    _make_directory_link(other, target)
+    server = WebServer(WebSettings(workspace=tmp_path), provider=object())
+    server.start()
+    try:
+        base = f"http://127.0.0.1:{server.port}"
+        with httpx.Client(trust_env=False) as client:
+            listing = client.get(f"{base}/api/dirs", params={"path": str(tmp_path)})
+            assert listing.status_code == 200
+            by_name = {item["name"]: item["path"] for item in listing.json()["dirs"]}
+            assert Path(by_name["link"]) == link
+            assert Path(by_name["other"]) == other
+            removed = client.request("DELETE", f"{base}/api/file", json={"path": by_name["link"]})
+            assert removed.status_code == 200
+            assert not link.exists()
+            assert (target / "keep.txt").read_text(encoding="utf-8") == "keep"
+            renamed = client.post(
+                f"{base}/api/file/rename",
+                json={"path": by_name["other"], "name": "renamed-link"},
+            )
+            assert renamed.status_code == 200
+            assert (tmp_path / "renamed-link").exists()
+            assert target.is_dir()
+            assert (target / "keep.txt").is_file()
+    finally:
+        server.shutdown()
+
+
+def test_case_only_rename_keeps_the_file(tmp_path: Path):
+    source = tmp_path / "Old.txt"
+    source.write_text("x", encoding="utf-8")
+    server = WebServer(WebSettings(workspace=tmp_path), provider=object())
+    server.start()
+    try:
+        base = f"http://127.0.0.1:{server.port}"
+        with httpx.Client(trust_env=False) as client:
+            changed = client.post(f"{base}/api/file/rename", json={"path": str(source), "name": "old.txt"})
+            if os.name == "nt":
+                assert changed.status_code == 200
+                assert (tmp_path / "old.txt").read_text(encoding="utf-8") == "x"
+            else:
+                assert changed.status_code == 200
+                assert (tmp_path / "old.txt").read_text(encoding="utf-8") == "x"
+                assert source.is_file()
+    finally:
+        server.shutdown()
+
+
+def test_failed_tree_delete_is_not_reported_as_missing(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    folder = tmp_path / "folder"
+    folder.mkdir()
+    (folder / "inside.txt").write_text("x", encoding="utf-8")
+
+    def locked(path: Path) -> None:
+        raise OSError("locked")
+
+    monkeypatch.setattr("vector_harness.web_files.shutil.rmtree", locked)
+    server = WebServer(WebSettings(workspace=tmp_path), provider=object())
+    server.start()
+    try:
+        base = f"http://127.0.0.1:{server.port}"
+        with httpx.Client(trust_env=False) as client:
+            removed = client.request("DELETE", f"{base}/api/file", json={"path": str(folder)})
+            assert removed.status_code == 500
+            assert removed.json() == {"error": "delete_failed"}
+            assert (folder / "inside.txt").is_file()
     finally:
         server.shutdown()
