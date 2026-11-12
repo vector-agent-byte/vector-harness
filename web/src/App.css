@@ -16,7 +16,6 @@
   flex-direction: column;
   min-height: 0;
   padding: 16px 8px 12px;
-  border-right: 1px solid #e5e5e5;
   background: #fff;
 }
 
@@ -36,7 +35,6 @@
   flex-direction: column;
   min-height: 0;
   padding: 16px 12px 12px;
-  border-left: 1px solid #e5e5e5;
   background: #fff;
 }
 
@@ -620,8 +618,6 @@
   flex-direction: column;
   min-height: 0;
   background: #fff;
-  border-left: 1px solid #e5e5e5;
-  border-right: 1px solid #e5e5e5;
 }
 
 .topbar {

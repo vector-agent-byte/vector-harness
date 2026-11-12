@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import mimetypes
 import os
 import shutil
@@ -15,6 +16,21 @@ from dataclasses import dataclass
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, quote, unquote, urlsplit
+
+_logger = logging.getLogger("vector_harness.web")
+
+
+def _setup_log(log_path: Path) -> None:
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+    handler = logging.FileHandler(log_path, encoding="utf-8")
+    handler.setFormatter(
+        logging.Formatter(
+            "%(asctime)s %(levelname)-5s %(message)s",
+            datefmt="%Y-%m-%d %H:%M:%S",
+        )
+    )
+    _logger.addHandler(handler)
+    _logger.setLevel(logging.DEBUG)
 
 from vector_harness.cli import build_agent
 from vector_harness.core.session import Session
@@ -90,6 +106,7 @@ class WebServer:
         self.settings = settings
         self.workdir = settings.workspace.resolve()
         self.provider = provider
+        _setup_log(settings.workspace / ".vector" / "server.log")
         self.port = 0
         self.running_id: str | None = None
         # 盖住「检查正忙」到这一轮结束。拿不到锁就是已经有一轮。
@@ -174,7 +191,7 @@ class _Handler(BaseHTTPRequestHandler):
         _route(self, "DELETE")
 
     def log_message(self, format: str, *args: object) -> None:
-        return
+        _logger.info(format, *args)
 
 
 def _provider_model(provider: object) -> str:
@@ -304,11 +321,16 @@ def _send_message(app: WebServer, handler: BaseHTTPRequestHandler, session_id: s
     app._cancel.clear()
     app.running_id = session_id
     begin_run(app.settings.workspace, session_id)
+    _logger.info("run start  session=%s mode=%s text=%.120r", session_id, mode or "default", text)
     try:
         _stream_turn(app, handler, session_path, text, plan=plan, reflect=reflect)
+    except Exception:
+        _logger.exception("run error  session=%s", session_id)
+        raise
     finally:
         app.running_id = None
         finish_run(app.settings.workspace, session_id)
+        _logger.info("run finish session=%s", session_id)
         app._lock.release()
 
 
@@ -372,12 +394,18 @@ def _stream_turn(
             app._run_loop = None
 
     result = asyncio.run(drive())
+    _status = "stopped" if result is None else result.status
+    _text   = "" if result is None else result.text
+    if _status == "error":
+        _logger.error("run_result error: %s", _text or "(no detail)")
+    else:
+        _logger.info("run_result status=%s", _status)
     _write_event(
         handler,
         {
             "kind": "run_result",
-            "status": "stopped" if result is None else result.status,
-            "text": "" if result is None else result.text,
+            "status": _status,
+            "text": _text,
             "name": "",
             "tool_call_id": "",
             "arguments": None,
