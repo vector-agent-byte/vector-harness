@@ -1501,6 +1501,9 @@ export default function App() {
         <header className="topbar">
           <div className="title-block">
             <h1 className="current-title">{openSession ? openSession.title : "会话"}</h1>
+            {openSession?.started_at != null ? (
+              <span className="session-start-time">开始于 {formatClock(openSession.started_at)}</span>
+            ) : null}
           </div>
         </header>
         {errorText ? (
@@ -1516,11 +1519,22 @@ export default function App() {
             <div className="transcript-wrap">
             <div className="transcript" ref={transcriptRef}>
               <div className="column">
-                {openId ? (
-                  messages.map((message, index) => {
+                {openId ? (() => {
+                  const SILENT_TOOLS = new Set(["update_todos", "submit_verdict"])
+                  const toolCallNames = new Map<string, string>()
+                  for (const msg of messages) {
+                    for (const call of msg.tool_calls ?? []) {
+                      if (call.id) toolCallNames.set(call.id, call.name)
+                    }
+                  }
+                  return messages.map((message, index) => {
                     const hasContent = message.content.trim() !== ""
                     const hasToolCalls = (message.tool_calls?.filter((c) => c.name !== "").length ?? 0) > 0
                     if (!hasContent && !hasToolCalls) return null
+                    if (message.role === "tool" && message.tool_call_id) {
+                      const calledName = toolCallNames.get(message.tool_call_id)
+                      if (calledName && SILENT_TOOLS.has(calledName) && !message.is_error) return null
+                    }
                     const sentAt = [...messages.slice(0, index)]
                       .reverse()
                       .find((item) => item.role === "user" && item.created_at !== null)?.created_at ?? null
@@ -1575,7 +1589,7 @@ export default function App() {
                       </article>
                     )
                   })
-                ) : (
+                })() : (
                   <div className="pick">从左侧打开一个会话</div>
                 )}
                 {showLive && live ? (
