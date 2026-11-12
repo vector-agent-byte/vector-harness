@@ -5,6 +5,30 @@
 
 模式不进这个文件。调用方把压缩之类的变换放进 ``context_transforms``，
 用 ``install_prompt`` 和 ``replace_tool`` 挂上提示和工具。
+
+整体执行路径是：
+run(user_text)
+  │
+  ├─ 把用户消息追加到 session
+  │
+  └─ 循环，最多 max_steps 次
+       │
+       ├─ 读取历史消息，执行上下文变换
+       │
+       ├─ 请求模型，收集流式回复
+       │    └─ ProviderError → 返回 error
+       │
+       ├─ 没有工具调用
+       │    ├─ 保存助手回复
+       │    └─ 返回 complete
+       │
+       └─ 有工具调用
+            ├─ 保存助手正文和工具调用
+            ├─ 执行工具，把工具结果写入 session
+            ├─ 已达上限 → 返回 max_steps
+            └─ 否则进入下一次模型请求
+
+形成结果后，发送 RUN_END 事件并返回
 """
 
 from __future__ import annotations
@@ -52,11 +76,11 @@ class Loop:
 
     provider: Model
     tools: list[Tool]
-    session: Session
-    system: str
-    context_transforms: list[ContextTransform] | None = None
-    tool_hooks: list[ToolHook] | None = None
-    on_event: Callable[[ProviderEvent], None] | None = None
+    session: Session  # 保存对话历史，支持内存或 JSONL 文件
+    system: str  # 系统提示词，与历史消息分开传给模型
+    context_transforms: list[ContextTransform] | None = None  # 每次模型请求前，对历史消息做变换
+    tool_hooks: list[ToolHook] | None = None  # 工具执行前，改写参数或拒绝调用
+    on_event: Callable[[ProviderEvent], None] | None = None  # 接收流式事件，供终端等观察方展示
     max_steps: int = 25
 
     def __post_init__(self) -> None:
