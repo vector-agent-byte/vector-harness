@@ -14,6 +14,99 @@ function Markdown({ text }: { text: string }) {
   )
 }
 
+type TodoItem = { id?: string; content: string; status: string }
+
+function TodoList({ todos }: { todos: TodoItem[] }) {
+  const done = todos.filter((t) => t.status === "completed").length
+  const pct = todos.length > 0 ? Math.round((done / todos.length) * 100) : 0
+  return (
+    <div className="plan-card">
+      <div className="plan-header">
+        <span className="plan-label">计划</span>
+        <span className="plan-fraction">{done} / {todos.length}</span>
+        <div className="plan-bar-wrap">
+          <div className="plan-bar-fill" style={{ width: `${pct}%` }} />
+        </div>
+      </div>
+      <ul className="plan-list">
+        {todos.map((todo, i) => (
+          <li key={todo.id ?? i} className={`plan-item ${todo.status}`}>
+            <span className="plan-icon" aria-hidden="true">
+              {todo.status === "completed" ? "✓" : todo.status === "in_progress" ? "▶" : "○"}
+            </span>
+            <span className="plan-content">{todo.content}</span>
+          </li>
+        ))}
+      </ul>
+    </div>
+  )
+}
+
+function ReflectionCard({ pass, text }: { pass: boolean; text: string }) {
+  return (
+    <div className={`reflection-card ${pass ? "pass" : "fail"}`}>
+      <span className="reflection-verdict">{pass ? "反思通过" : "反思未通过"}</span>
+      {text ? <span className="reflection-text">{text}</span> : null}
+    </div>
+  )
+}
+
+function parseReflection(content: string): { pass: boolean; text: string } | null {
+  const m = content.match(/^\[Reflection\]\s*(通过|未通过)\s*[—-]\s*(.*)$/s)
+  if (!m) return null
+  return { pass: m[1] === "通过", text: m[2].trim() }
+}
+
+function ThinkingBlock({ text, streaming }: { text: string; streaming: boolean }) {
+  const [expanded, setExpanded] = useState(true)
+  const prevStreaming = useRef(streaming)
+  useEffect(() => {
+    if (prevStreaming.current && !streaming) setExpanded(false)
+    prevStreaming.current = streaming
+  }, [streaming])
+  return (
+    <div className="thinking-block">
+      <button
+        type="button"
+        className="thinking-toggle"
+        aria-expanded={expanded}
+        onClick={() => setExpanded((v) => !v)}
+      >
+        <span className="thinking-sparkle" aria-hidden="true">✦</span>
+        <span className="thinking-title">思考</span>
+        {streaming ? <span className="thinking-pulse" aria-hidden="true" /> : null}
+        <span className="thinking-chevron" aria-hidden="true">{expanded ? "▴" : "▾"}</span>
+      </button>
+      {expanded ? (
+        <div className="thinking-body">
+          <Markdown text={text} />
+        </div>
+      ) : null}
+    </div>
+  )
+}
+
+type StatusKind = "warn" | "error" | "neutral"
+
+const STATUS_CONFIG: Record<string, { icon: string; title: string; hint: string; kind: StatusKind }> = {
+  max_steps: { icon: "⚡", title: "已达步数上限", hint: "任务可能未完整执行，可继续输入指令", kind: "warn" },
+  error:     { icon: "✕", title: "模型请求失败", hint: "接口出错，请稍后重试或检查配置", kind: "error" },
+  stopped:   { icon: "◼", title: "已停止", hint: "任务已手动中止", kind: "neutral" },
+}
+
+function StatusNote({ status }: { status: string }) {
+  const cfg = STATUS_CONFIG[status] ?? { icon: "·", title: status, hint: "", kind: "neutral" as StatusKind }
+  return (
+    <div className={`status-note status-note-${cfg.kind}`}>
+      <span className="status-note-icon" aria-hidden="true">{cfg.icon}</span>
+      <div className="status-note-body">
+        <span className="status-note-title">{cfg.title}</span>
+        {cfg.hint ? <span className="status-note-hint">{cfg.hint}</span> : null}
+      </div>
+    </div>
+  )
+}
+
 type SessionItem = {
   id: string
   title: string
@@ -431,6 +524,8 @@ export default function App() {
   const cacheRef = useRef(new Map<string, ChatMessage[]>())
   const bottomRef = useRef<HTMLDivElement | null>(null)
   const transcriptRef = useRef<HTMLDivElement | null>(null)
+  const prevOpenIdRef = useRef<string | null>(null)
+  const isNearBottomRef = useRef(true)
   const locatedTimer = useRef<number | null>(null)
   const dialogOffsetRef = useRef(dialogOffset)
   const dialogGesture = useRef<
@@ -632,7 +727,16 @@ export default function App() {
   }, [runningId])
 
   useEffect(() => {
-    bottomRef.current?.scrollIntoView({ block: "end" })
+    const transcript = transcriptRef.current
+    const sessionChanged = prevOpenIdRef.current !== openId
+    prevOpenIdRef.current = openId
+    if (sessionChanged) {
+      isNearBottomRef.current = true
+    }
+    if (!transcript) return
+    if (isNearBottomRef.current) {
+      transcript.scrollTop = transcript.scrollHeight
+    }
   }, [messages, live, openId])
 
   const dialogKey = pickerOpen
@@ -779,11 +883,17 @@ export default function App() {
     observer.observe(root)
     const column = root.querySelector(".column")
     if (column) observer.observe(column)
+    const trackBottom = () => {
+      const { scrollTop, scrollHeight, clientHeight } = root
+      isNearBottomRef.current = scrollHeight - scrollTop - clientHeight < 120
+    }
     root.addEventListener("scroll", schedule, { passive: true })
+    root.addEventListener("scroll", trackBottom, { passive: true })
     return () => {
       window.cancelAnimationFrame(frame)
       observer.disconnect()
       root.removeEventListener("scroll", schedule)
+      root.removeEventListener("scroll", trackBottom)
     }
   }, [messages, live, openId])
 
@@ -1184,6 +1294,7 @@ export default function App() {
     streamSessionRef.current = sessionId
     pendingToolsRef.current = 0
     resetLiveRef.current = false
+    prevOpenIdRef.current = null
     setReadingStream(true)
     setDraft("")
     setErrorText(null)
@@ -1392,7 +1503,12 @@ export default function App() {
             <h1 className="current-title">{openSession ? openSession.title : "会话"}</h1>
           </div>
         </header>
-        {errorText ? <div className="error-banner">{errorLabel(errorText)}</div> : null}
+        {errorText ? (
+          <div className="error-banner">
+            <span className="error-banner-icon" aria-hidden="true">✕</span>
+            {errorLabel(errorText)}
+          </div>
+        ) : null}
         {listReady && sessions.length === 0 ? (
           <div className="empty">先新建</div>
         ) : (
@@ -1402,6 +1518,9 @@ export default function App() {
               <div className="column">
                 {openId ? (
                   messages.map((message, index) => {
+                    const hasContent = message.content.trim() !== ""
+                    const hasToolCalls = (message.tool_calls?.filter((c) => c.name !== "").length ?? 0) > 0
+                    if (!hasContent && !hasToolCalls) return null
                     const sentAt = [...messages.slice(0, index)]
                       .reverse()
                       .find((item) => item.role === "user" && item.created_at !== null)?.created_at ?? null
@@ -1421,10 +1540,25 @@ export default function App() {
                             ) : null}
                             {message.role === "tool" ? (
                               <pre className="tool-output">{message.content}</pre>
-                            ) : (
-                              <Markdown text={message.content} />
-                            )}
+                            ) : (() => {
+                              const reflection = parseReflection(message.content)
+                              if (reflection) return <ReflectionCard pass={reflection.pass} text={reflection.text} />
+                              return <Markdown text={message.content} />
+                            })()}
                             {message.tool_calls?.map((call, callIndex) => {
+                              if (!call.name) return null
+                              if (call.name === "update_todos" && Array.isArray(call.args?.todos)) {
+                                const todos = call.args!.todos as TodoItem[]
+                                return <TodoList key={`${call.id}-${callIndex}`} todos={todos} />
+                              }
+                              if (call.name === "submit_verdict") {
+                                const pass = call.args?.pass === true
+                                return (
+                                  <div key={`${call.id}-${callIndex}`} className={`verdict-pill ${pass ? "pass" : "fail"}`}>
+                                    {pass ? "✓ 反思通过" : "✗ 反思未通过"}
+                                  </div>
+                                )
+                              }
                               const summary = toolSummary(call.name, call.args)
                               return (
                                 <div key={`${call.id}-${callIndex}`} className="tool-name">
@@ -1449,12 +1583,23 @@ export default function App() {
                     <div className="message-stack">
                       <div className="bubble">
                         {live.thinking ? (
-                          <div className="thinking">
-                            <Markdown text={live.thinking} />
-                          </div>
+                          <ThinkingBlock text={live.thinking} streaming={readingStream} />
                         ) : null}
                         <Markdown text={live.text} />
                         {live.tools.map((tool, index) => {
+                          if (!tool.name) return null
+                          if (tool.name === "update_todos" && Array.isArray(tool.args?.todos)) {
+                            const todos = tool.args!.todos as TodoItem[]
+                            return <TodoList key={`${tool.name}-${index}`} todos={todos} />
+                          }
+                          if (tool.name === "submit_verdict") {
+                            const pass = tool.args?.pass === true
+                            return (
+                              <div key={`${tool.name}-${index}`} className={`verdict-pill ${pass ? "pass" : "fail"}`}>
+                                {pass ? "✓ 反思通过" : "✗ 反思未通过"}
+                              </div>
+                            )
+                          }
                           const summary = toolSummary(tool.name, tool.args)
                           return (
                             <div key={`${tool.name}-${index}`} className="tool-name">
@@ -1492,7 +1637,7 @@ export default function App() {
             </div>
             {visibleStatus ? (
               <div className="status-wrap">
-                <div className="status-banner">{visibleStatus === "stopped" ? "已停止" : visibleStatus}</div>
+                <StatusNote status={visibleStatus} />
               </div>
             ) : null}
             {openId ? (

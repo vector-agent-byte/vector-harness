@@ -6,6 +6,7 @@
 
 from __future__ import annotations
 
+import os
 import subprocess
 import sys
 import threading
@@ -59,15 +60,22 @@ class Shell:
         command = arguments.get("command", "")
         if not isinstance(command, str):
             command = str(command)
+        # Windows 上强制 UTF-8 代码页，避免 GBK 乱码
+        actual_command = command
+        if sys.platform == "win32":
+            actual_command = f"chcp 65001 > nul 2>&1 & {command}"
+        env = os.environ.copy()
+        env["PYTHONIOENCODING"] = "utf-8"
+        env["PYTHONUTF8"] = "1"
         proc = subprocess.Popen(
-            command,
+            actual_command,
             shell=True,
             cwd=self.root,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
-            text=True,
-            # 控制台编码解不开的字节换成替换符，避免读线程抛 UnicodeDecodeError。
+            encoding="utf-8",
             errors="replace",
+            env=env,
         )
         self._track(proc, True)
         started = time.monotonic()
