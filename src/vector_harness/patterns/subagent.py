@@ -14,7 +14,7 @@ class _Delegate:
     system: str
     context_transforms: list | None = None
     tool_hooks: list | None = None
-    max_steps: int = 10
+    max_steps: int = 50
     host: Loop | None = field(default=None, repr=False, compare=False)
     name: str = "delegate"
     description: str = "Delegate a task to a child agent."
@@ -61,9 +61,9 @@ def delegate_tool(
     system: str,
     context_transforms: list | None = None,
     tool_hooks: list | None = None,
-    max_steps: int = 10,
+    max_steps: int = 50,
 ) -> _Delegate:
-    """构造委托工具。默认最多 10 步，调用方负责把它放进父循环的工具列表。"""
+    """构造委托工具。默认最多 50 步，调用方负责把它放进父循环的工具列表。"""
     return _Delegate(
         provider=provider,
         tools=tools,

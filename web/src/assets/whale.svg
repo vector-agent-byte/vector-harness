@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 36 30" fill="currentColor">
+  <!-- main body -->
+  <path d="M7 11C11 5 19 3 26 6C30 8 33 12 33 17C33 22 29 26 23 27C17 28 11 25 8 20C6 21 4 23 2 25C3 22 4 20 6 19C4 16 3 13 4 10C2 10 0 11 0 11C1 9 4 10 7 11Z"/>
+  <!-- dorsal fin -->
+  <path d="M22 6C23 3 26 1 28 2C27 5 25 7 22 6Z"/>
+  <!-- tail fluke upper -->
+  <path d="M7 11C6 8 3 5 1 4C3 7 5 10 7 11Z"/>
+  <!-- tail fluke lower -->
+  <path d="M6 19C5 22 3 24 1 26C3 23 5 21 6 19Z"/>
+  <!-- eye -->
+  <circle fill="white" cx="24" cy="14" r="2.2"/>
+</svg>

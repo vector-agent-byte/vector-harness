@@ -81,7 +81,7 @@ class Loop:
     context_transforms: list[ContextTransform] | None = None  # 每次模型请求前，对历史消息做变换
     tool_hooks: list[ToolHook] | None = None  # 工具执行前，改写参数或拒绝调用
     on_event: Callable[[ProviderEvent], None] | None = None  # 接收流式事件，供终端等观察方展示
-    max_steps: int = 25
+    max_steps: int = 50
 
     def __post_init__(self) -> None:
         """没传入变换或钩子时用空列表，后面就可以直接遍历。"""

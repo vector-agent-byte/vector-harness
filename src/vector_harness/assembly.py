@@ -33,7 +33,7 @@ _load_patterns()
 
 DEFAULT_MAX_CHARS = 80000
 DEFAULT_KEEP_LAST = 8
-DEFAULT_CHILD_MAX_STEPS = 10
+DEFAULT_CHILD_MAX_STEPS = 50
 
 
 def apply_patterns(

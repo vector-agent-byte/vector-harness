@@ -51,8 +51,8 @@ class VectorHarness:
         loop_on_event: Callable[[ProviderEvent], None] | None = None,
         max_chars: int = 80000,
         keep_last: int = 8,
-        child_max_steps: int = 10,
-        max_steps: int = 25,
+        child_max_steps: int = 50,
+        max_steps: int = 50,
     ) -> None:
         self.name = name
         self.llm = llm

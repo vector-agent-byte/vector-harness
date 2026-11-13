@@ -58,9 +58,10 @@ _logger = logging.getLogger("vector_harness.web")
 _NO_DIST = "页面还没有构建。请先在 web/ 执行 npm run build。\n"
 # 页面上的三种模式。缺省时沿用启动服务时的 --plan / --reflect。
 _MODES = {
-    "react": (False, False),
-    "plan": (True, False),
-    "reflect": (False, True),
+    "react":      (False, False, False),
+    "plan":       (True,  False, False),
+    "reflect":    (False, True,  False),
+    "subagents":  (False, False, True),
 }
 
 
@@ -75,6 +76,9 @@ def _setup_log(log_path: Path) -> None:
     )
     _logger.addHandler(handler)
     _logger.setLevel(logging.DEBUG)
+    provider_logger = logging.getLogger("vector_harness.provider")
+    provider_logger.addHandler(handler)
+    provider_logger.setLevel(logging.DEBUG)
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -86,7 +90,7 @@ class WebSettings:
     plan: bool = False
     reflect: bool = False
     subagents: bool = False
-    max_steps: int = 25
+    max_steps: int = 50
     dist_dir: Path | None = None
 
 
@@ -412,9 +416,9 @@ def _handle_messages(app: WebServer, handler, variables: list[str]) -> None:
         send_error(handler, 400, "empty")
         return
     if mode is None:
-        plan, reflect = app.settings.plan, app.settings.reflect
+        plan, reflect, subagents = app.settings.plan, app.settings.reflect, app.settings.subagents
     else:
-        plan, reflect = _MODES[mode]
+        plan, reflect, subagents = _MODES[mode]
     # 锁在启动运行之前就占住，一直留到 run 返回。第二次发送拿不到锁。
     if not app.runs.acquire():
         send_error(handler, 409, "busy")
@@ -423,7 +427,7 @@ def _handle_messages(app: WebServer, handler, variables: list[str]) -> None:
     begin_event_stream(handler)
     try:
         status, content = app.runs.run(
-            session_id, path, text, plan=plan, reflect=reflect
+            session_id, path, text, plan=plan, reflect=reflect, subagents=subagents
         )
         write_event(
             handler,

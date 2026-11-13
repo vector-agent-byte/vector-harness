@@ -37,6 +37,7 @@ import type {
   EntryKind,
   EntryMenu,
   FilePreview,
+  LiveSection,
   LiveTurn,
   NamedPath,
   RunNote,
@@ -52,9 +53,10 @@ const POLL_MS = 1000
 const OPEN_SESSION_KEY = "vector-open-session"
 
 const MODES = [
-  { id: "react", label: "ReAct" },
-  { id: "plan", label: "PlanAndSolve" },
-  { id: "reflect", label: "Reflection" },
+  { id: "react",     label: "ReAct" },
+  { id: "plan",      label: "PlanAndSolve" },
+  { id: "reflect",   label: "Reflection" },
+  { id: "subagents", label: "SubAgents" },
 ] as const
 
 type ModeId = (typeof MODES)[number]["id"]
@@ -69,6 +71,7 @@ export default function App() {
   const [readingStream, setReadingStream] = useState(false)
   const [streamSessionId, setStreamSessionId] = useState<string | null>(null)
   const [live, setLive] = useState<LiveTurn | null>(null)
+  const [savedChildren, setSavedChildren] = useState<Record<string, LiveSection[]>>({})
   const [runNote, setRunNote] = useState<RunNote | null>(null)
   const [errorText, setErrorText] = useState<string | null>(null)
   const [listReady, setListReady] = useState(false)
@@ -105,6 +108,8 @@ export default function App() {
   const creatingRef = useRef(false)
   const pendingToolsRef = useRef(0)
   const resetLiveRef = useRef(false)
+  const lastOriginRef = useRef<string>("")
+  const liveRef = useRef<LiveTurn | null>(null)
   const messagesRef = useRef<ChatMessage[]>([])
   const cacheRef = useRef(new Map<string, ChatMessage[]>())
   const bottomRef = useRef<HTMLDivElement | null>(null)
@@ -129,6 +134,7 @@ export default function App() {
   messagesRef.current = messages
   pickerOpenRef.current = pickerOpen
   workdirRef.current = workdir
+  liveRef.current = live
 
   const refreshList = useCallback(async (): Promise<SessionList | null> => {
     try {
@@ -551,6 +557,9 @@ export default function App() {
           const loaded = await fetchSessionMessages(current)
           if (readingStreamRef.current) return
           if (loaded && openIdRef.current === current) {
+            if (liveRef.current?.children.length) {
+              setSavedChildren(prev => ({...prev, [current]: liveRef.current!.children}))
+            }
             cacheRef.current.set(current, loaded)
             setMessages(loaded)
             setLive(null)
@@ -849,9 +858,23 @@ export default function App() {
     }
   }
 
-  function appendDelta(kind: "thinking" | "text" | "tool", piece: string, toolArgs?: Record<string, unknown> | null) {
+  function appendDelta(kind: "thinking" | "text" | "tool", piece: string, toolArgs?: Record<string, unknown> | null, origin?: string) {
+    const isChild = origin === "child"
+    const wasChild = lastOriginRef.current === "child"
+    lastOriginRef.current = origin ?? ""
     setLive((prev) => {
-      const base = prev ?? { thinking: "", text: "", tools: [] }
+      const base = prev ?? { thinking: "", text: "", tools: [], children: [] }
+      if (isChild) {
+        const needNew = !wasChild || base.children.length === 0
+        const kids = [...base.children]
+        if (needNew) kids.push({ thinking: "", text: "", tools: [] })
+        const last: LiveSection = { ...kids[kids.length - 1] }
+        if (kind === "thinking") last.thinking += piece
+        else if (kind === "text") last.text += piece
+        else if (piece) last.tools = [...last.tools, { name: piece, args: toolArgs ?? null }]
+        kids[kids.length - 1] = last
+        return { ...base, children: kids }
+      }
       if (kind === "thinking") return { ...base, thinking: base.thinking + piece }
       if (kind === "text") return { ...base, text: base.text + piece }
       if (!piece) return base
@@ -912,7 +935,8 @@ export default function App() {
       messagesRef.current = next
       return next
     })
-    setLive({ thinking: "", text: "", tools: [] })
+    setSavedChildren(prev => { const n = {...prev}; delete n[sessionId]; return n })
+    setLive({ thinking: "", text: "", tools: [], children: [] })
     setStreamSessionId(sessionId)
 
     try {
@@ -948,27 +972,33 @@ export default function App() {
       )
 
       const { completed, status } = await readEventStream(response, (event) => {
+        const origin = typeof event.origin === "string" ? event.origin : undefined
+        const isChild = origin === "child"
         if (event.kind === "text_delta" && typeof event.text === "string") {
-          if (resetLiveRef.current) {
+          if (resetLiveRef.current && !isChild) {
             resetLiveRef.current = false
-            setLive({ thinking: "", text: event.text, tools: [] })
+            lastOriginRef.current = ""
+            const t = event.text as string
+            setLive(prev => ({ thinking: "", text: t, tools: [], children: prev?.children ?? [] }))
           } else {
-            appendDelta("text", event.text)
+            appendDelta("text", event.text, undefined, origin)
           }
         } else if (event.kind === "thinking_delta" && typeof event.text === "string") {
-          if (resetLiveRef.current) {
+          if (resetLiveRef.current && !isChild) {
             resetLiveRef.current = false
-            setLive({ thinking: event.text, text: "", tools: [] })
+            lastOriginRef.current = ""
+            const t = event.text as string
+            setLive(prev => ({ thinking: t, text: "", tools: [], children: prev?.children ?? [] }))
           } else {
-            appendDelta("thinking", event.text)
+            appendDelta("thinking", event.text, undefined, origin)
           }
         } else if (event.kind === "tool_call_end" && typeof event.name === "string") {
-          pendingToolsRef.current += 1
+          if (!isChild) pendingToolsRef.current += 1
           const args =
             event.arguments && typeof event.arguments === "object"
               ? (event.arguments as Record<string, unknown>)
               : null
-          appendDelta("tool", event.name, args)
+          appendDelta("tool", event.name, args, origin)
         } else if (event.kind === "tool_result") {
           pendingToolsRef.current = Math.max(0, pendingToolsRef.current - 1)
           if (pendingToolsRef.current === 0) {
@@ -988,6 +1018,9 @@ export default function App() {
         const loaded = await fetchSessionMessages(sessionId)
         await refreshList()
         if (loaded) {
+          if (liveRef.current?.children.length) {
+            setSavedChildren(prev => ({...prev, [sessionId]: liveRef.current!.children}))
+          }
           cacheRef.current.set(sessionId, loaded)
           if (openIdRef.current === sessionId) setMessages(loaded)
           setLive(null)
@@ -1005,6 +1038,9 @@ export default function App() {
         if (current) {
           const loaded = await fetchSessionMessages(current)
           if (loaded && openIdRef.current === current) {
+            if (liveRef.current?.children.length) {
+              setSavedChildren(prev => ({...prev, [current]: liveRef.current!.children}))
+            }
             cacheRef.current.set(current, loaded)
             setMessages(loaded)
             setLive(null)
@@ -1062,11 +1098,18 @@ export default function App() {
   return (
     <div className="app">
       <aside className="sidebar" style={{ width: sidebarWidth }}>
-        <div className="brand">Vector Harness</div>
+        <div className="brand">
+          <svg className="brand-whale" aria-hidden="true" viewBox="0 0 48 46" fill="none" xmlns="http://www.w3.org/2000/svg">
+            <path fill="#1a1a1a" d="M25.946 44.938c-.664.845-2.021.375-2.021-.698V33.937a2.26 2.26 0 0 0-2.262-2.262H10.287c-.92 0-1.456-1.04-.92-1.788l7.48-10.471c1.07-1.497 0-3.578-1.842-3.578H1.237c-.92 0-1.456-1.04-.92-1.788L10.013.474c.214-.297.556-.474.92-.474h28.894c.92 0 1.456 1.04.92 1.788l-7.48 10.471c-1.07 1.498 0 3.579 1.842 3.579h11.377c.943 0 1.473 1.088.89 1.83L25.947 44.94z"/>
+          </svg>
+          Vector Harness
+        </div>
         <button type="button" className="new-session" onClick={() => void createSession()}>
-          <span className="plus" aria-hidden="true">
-            +
-          </span>
+          <svg className="new-session-icon" aria-hidden="true" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+            <circle cx="8" cy="8" r="6.5" />
+            <line x1="8" y1="5" x2="8" y2="11" />
+            <line x1="5" y1="8" x2="11" y2="8" />
+          </svg>
           新会话
         </button>
         <div className="side-label">会话</div>
@@ -1154,25 +1197,65 @@ export default function App() {
                 {openId ? (() => {
                   const SILENT_TOOLS = new Set(["update_todos", "submit_verdict"])
                   const toolCallNames = new Map<string, string>()
+                  const delegateCallIndices = new Map<string, number>()
+                  let delegateCount = 0
                   for (const msg of messages) {
                     for (const call of msg.tool_calls ?? []) {
-                      if (call.id) toolCallNames.set(call.id, call.name)
+                      if (call.id) {
+                        toolCallNames.set(call.id, call.name)
+                        if (call.name === "delegate") delegateCallIndices.set(call.id, delegateCount++)
+                      }
                     }
                   }
-                  return messages.map((message, index) => {
+                  const childSections = savedChildren[openId] ?? []
+                  return messages.flatMap((message, index) => {
                     const hasContent = message.content.trim() !== ""
                     const hasToolCalls = (message.tool_calls?.filter((c) => c.name !== "").length ?? 0) > 0
-                    if (!hasContent && !hasToolCalls) return null
+                    if (!hasContent && !hasToolCalls) return []
                     if (message.role === "tool" && message.tool_call_id) {
                       const calledName = toolCallNames.get(message.tool_call_id)
-                      if (calledName && SILENT_TOOLS.has(calledName) && !message.is_error) return null
+                      if (calledName && SILENT_TOOLS.has(calledName) && !message.is_error) return []
                     }
                     const sentAt = [...messages.slice(0, index)]
                       .reverse()
                       .find((item) => item.role === "user" && item.created_at !== null)?.created_at ?? null
                     const timeLabel = messageTimeLabel(message, sentAt)
                     const isUser = message.role === "user"
-                    return (
+                    const prefix = [] as Array<ReturnType<typeof Object>>
+                    if (message.role === "tool" && message.tool_call_id) {
+                      const delegateIndex = delegateCallIndices.get(message.tool_call_id)
+                      const childSection = delegateIndex !== undefined ? childSections[delegateIndex] : undefined
+                      if (childSection) {
+                        prefix.push(
+                          <div key={`child-saved-${message.tool_call_id}`} className="child-agent-block">
+                            <div className="child-agent-header">
+                              <svg className="child-agent-icon" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                                <circle cx="7" cy="7" r="5.5"/>
+                                <path d="M7 4.5v5M4.5 7h5"/>
+                              </svg>
+                              子代理
+                            </div>
+                            {childSection.thinking ? (
+                              <ThinkingBlock text={childSection.thinking} streaming={false} />
+                            ) : null}
+                            {childSection.text ? <Markdown text={childSection.text} /> : null}
+                            {childSection.tools.map((tool, ti) => {
+                              if (!tool.name) return null
+                              const summary = toolSummary(tool.name, tool.args)
+                              return (
+                                <div key={`${tool.name}-${ti}`} className="tool-name">
+                                  <span className="tool-name-label">{tool.name}</span>
+                                  {summary ? (
+                                    <span className="tool-name-arg">{summary.length > 80 ? summary.slice(0, 80) + "…" : summary}</span>
+                                  ) : null}
+                                </div>
+                              )
+                            })}
+                          </div>
+                        )
+                      }
+                    }
+                    const article = (
                       <article
                         key={`${index}-${message.role}`}
                         className={`message-row ${message.role}${message.is_error ? " is-error" : ""}${locatedUser === index ? " is-located" : ""}`}
@@ -1220,6 +1303,7 @@ export default function App() {
                         </div>
                       </article>
                     )
+                    return [...prefix, article]
                   })
                 })() : (
                   <div className="pick">从左侧打开一个会话</div>
@@ -1229,7 +1313,7 @@ export default function App() {
                     <div className="message-stack">
                       <div className="bubble">
                         {live.thinking ? (
-                          <ThinkingBlock text={live.thinking} streaming={readingStream} />
+                          <ThinkingBlock text={live.thinking} streaming={readingStream && lastOriginRef.current !== "child"} />
                         ) : null}
                         <Markdown text={live.text} />
                         {live.tools.map((tool, index) => {
@@ -1253,6 +1337,38 @@ export default function App() {
                               {summary ? (
                                 <span className="tool-name-arg">{summary.length > 80 ? summary.slice(0, 80) + "…" : summary}</span>
                               ) : null}
+                            </div>
+                          )
+                        })}
+                        {live.children.map((child, ci) => {
+                          const isLast = ci === live.children.length - 1
+                          const childStreaming = readingStream && isLast && lastOriginRef.current === "child"
+                          return (
+                            <div key={ci} className="child-agent-block">
+                              <div className="child-agent-header">
+                                <svg className="child-agent-icon" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                                  <circle cx="7" cy="7" r="5.5"/>
+                                  <path d="M7 4.5v5M4.5 7h5"/>
+                                </svg>
+                                子代理
+                                {childStreaming ? <span className="child-agent-pulse" /> : null}
+                              </div>
+                              {child.thinking ? (
+                                <ThinkingBlock text={child.thinking} streaming={childStreaming} />
+                              ) : null}
+                              {child.text ? <Markdown text={child.text} /> : null}
+                              {child.tools.map((tool, ti) => {
+                                if (!tool.name) return null
+                                const summary = toolSummary(tool.name, tool.args)
+                                return (
+                                  <div key={`${tool.name}-${ti}`} className="tool-name">
+                                    <span className="tool-name-label">{tool.name}</span>
+                                    {summary ? (
+                                      <span className="tool-name-arg">{summary.length > 80 ? summary.slice(0, 80) + "…" : summary}</span>
+                                    ) : null}
+                                  </div>
+                                )
+                              })}
                             </div>
                           )
                         })}

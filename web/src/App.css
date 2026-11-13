@@ -20,11 +20,20 @@
 }
 
 .brand {
+  display: flex;
+  align-items: center;
+  gap: 7px;
   padding: 2px 8px 16px;
   font-size: 14px;
   font-weight: 700;
   letter-spacing: -0.01em;
   color: #1a1a1a;
+}
+
+.brand-whale {
+  flex: none;
+  width: 20px;
+  height: 20px;
 }
 
 /* ── 右侧工作目录面板 ── */
@@ -381,11 +390,11 @@
   background: #f5f5f5;
 }
 
-.plus {
-  font-size: 15px;
-  line-height: 1;
+.new-session-icon {
+  flex: none;
+  width: 15px;
+  height: 15px;
   color: #666;
-  font-weight: 400;
 }
 
 .side-label {
@@ -983,6 +992,64 @@
   white-space: nowrap;
   max-width: 320px;
   font-weight: 400;
+}
+
+/* ── 子代理块 ── */
+.child-agent-block {
+  margin: 10px 0 6px;
+  border: 1px solid #e0e9ff;
+  border-left: 3px solid #2563eb;
+  border-radius: 0 8px 8px 0;
+  background: #f5f8ff;
+  overflow: hidden;
+}
+
+.child-agent-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  font-size: 11.5px;
+  font-weight: 600;
+  letter-spacing: 0.03em;
+  color: #2563eb;
+  background: #eef3ff;
+  border-bottom: 1px solid #e0e9ff;
+  user-select: none;
+}
+
+.child-agent-icon {
+  flex: none;
+  width: 13px;
+  height: 13px;
+}
+
+.child-agent-pulse {
+  display: inline-block;
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: #2563eb;
+  animation: pulse-dot 1.1s ease-in-out infinite;
+  flex: none;
+  margin-left: 2px;
+}
+
+.child-agent-block .thinking-block {
+  margin: 8px 10px 0;
+  background: #fff;
+  border-color: #d0deff;
+}
+
+.child-agent-block .md {
+  padding: 8px 12px;
+  font-size: 13.5px;
+}
+
+.child-agent-block .tool-name {
+  margin: 4px 10px 8px;
+  background: #fff;
+  border-color: #d0deff;
 }
 
 /* ── 思考块 ── */

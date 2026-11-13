@@ -80,6 +80,7 @@ class RunManager:
         *,
         plan: bool,
         reflect: bool,
+        subagents: bool = False,
     ) -> tuple[str, str]:
         """跑一轮并把结果写进会话。调用方先 ``acquire``，结束时 ``release``。
 
@@ -100,7 +101,7 @@ class RunManager:
             self.emit(event)
 
         try:
-            agent = self._build(session=Session(session_path), plan=plan, reflect=reflect)
+            agent = self._build(session=Session(session_path), plan=plan, reflect=reflect, subagents=subagents)
             for tool in agent.loop.tools:
                 if isinstance(tool, Shell):
                     tool.cancel = self._cancel
@@ -135,7 +136,7 @@ class RunManager:
             loop.call_soon_threadsafe(task.cancel)
         return True
 
-    def _build(self, *, session: Session, plan: bool, reflect: bool):
+    def _build(self, *, session: Session, plan: bool, reflect: bool, subagents: bool = False):
         """按这一份会话选中的技能装配这一轮。"""
         settings = self.settings
         chosen = session_skill(settings.workspace, session.path.stem)
@@ -149,7 +150,7 @@ class RunManager:
             compact=settings.compact,
             plan=plan,
             reflect=reflect,
-            subagents=settings.subagents,
+            subagents=settings.subagents or subagents,
             max_steps=settings.max_steps,
         )
 

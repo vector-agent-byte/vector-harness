@@ -12,10 +12,14 @@
 from __future__ import annotations
 
 import asyncio
+import json
+import logging
 import os
 from collections.abc import AsyncIterator, Callable, Mapping
 from pathlib import Path
 from typing import Any
+
+_provider_logger = logging.getLogger("vector_harness.provider")
 
 from openai import (
     APIConnectionError,
@@ -28,6 +32,7 @@ from openai import (
 from vector_harness.core.config import (
     apply_config,
     default_config_path,
+    log_settings_from_config,
     settings_from_config_then_env,
 )
 from vector_harness.core.openai_events import (
@@ -59,16 +64,16 @@ class OpenAICompatibleProvider:
         sleep: Callable = asyncio.sleep,
         transport: Any = None,
         config_file: Path | None = None,
+        log_messages: bool = False,
     ) -> None:
         """保存连接信息。没传入的连接项先读配置文件，缺的再读环境变量。
 
         三项都传入时不再读配置文件。``transport`` 只在测试里注入，用来伪造 HTTP 响应。
+        ``log_messages`` 为 True 时把完整请求和响应写进日志。
         """
+        cfg_path = default_config_path() if config_file is None else config_file
         if api_key is None or base_url is None or model is None:
-            filled = settings_from_config_then_env(
-                os.environ,
-                default_config_path() if config_file is None else config_file,
-            )
+            filled = settings_from_config_then_env(os.environ, cfg_path)
             if api_key is None:
                 api_key = filled.get("VECTOR_API_KEY") or ""
             if base_url is None:
@@ -87,10 +92,14 @@ class OpenAICompatibleProvider:
         self.max_attempts = max_attempts
         self.sleep = sleep
         self.transport = transport
+        self.log_messages = log_messages
 
     @classmethod
     def from_env(
-        cls, env: Mapping[str, str] | None = None
+        cls,
+        env: Mapping[str, str] | None = None,
+        *,
+        log_messages: bool = False,
     ) -> OpenAICompatibleProvider:
         """从环境变量构造。缺哪一项就报哪一项，密钥不来自命令行。
 
@@ -106,7 +115,7 @@ class OpenAICompatibleProvider:
         model = source.get("VECTOR_MODEL") or ""
         if not model:
             raise ProviderError("VECTOR_MODEL is not set")
-        return cls(api_key=api_key, base_url=base_url, model=model)
+        return cls(api_key=api_key, base_url=base_url, model=model, log_messages=log_messages)
 
     def _client(self) -> tuple[AsyncOpenAI, Any]:
         """每次尝试建一个客户端。有 transport 时用 httpx 把它接进去，方便测试。"""
@@ -136,15 +145,36 @@ class OpenAICompatibleProvider:
         if tools:
             payload["tools"] = [tool_payload(tool) for tool in tools]
 
+        if self.log_messages:
+            _provider_logger.debug(
+                "llm_request %s",
+                json.dumps(payload, ensure_ascii=False, separators=(",", ":")),
+            )
+
         for attempt in range(1, self.max_attempts + 1):
             retry_status: int | None = None
             client, http_client = self._client()
+            resp_text: list[str] = []
+            resp_tools: list[dict] = []
             try:
                 async with client:
                     try:
                         response = await client.chat.completions.create(**payload)
                         async for event in events_from_stream(response):
+                            if self.log_messages:
+                                if event.kind == "text_delta" and event.text:
+                                    resp_text.append(event.text)
+                                elif event.kind == "tool_call_end":
+                                    resp_tools.append(
+                                        {"name": event.name, "arguments": event.arguments}
+                                    )
                             yield event
+                        if self.log_messages:
+                            _provider_logger.debug(
+                                "llm_response text=%r tools=%s",
+                                "".join(resp_text),
+                                json.dumps(resp_tools, ensure_ascii=False, separators=(",", ":")),
+                            )
                     except APIStatusError as exc:
                         status = exc.status_code
                         if status == 429 or status >= 500:

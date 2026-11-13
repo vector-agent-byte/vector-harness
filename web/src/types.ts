@@ -44,10 +44,17 @@ export type LiveTool = {
   args: Record<string, unknown> | null
 }
 
+export type LiveSection = {
+  thinking: string
+  text: string
+  tools: LiveTool[]
+}
+
 export type LiveTurn = {
   thinking: string
   text: string
   tools: LiveTool[]
+  children: LiveSection[]
 }
 
 export type SessionList = {
@@ -63,6 +70,7 @@ export type StreamEvent = {
   status?: unknown
   arguments?: unknown
   tool_call_id?: unknown
+  origin?: unknown
 }
 
 export type RunNote = {

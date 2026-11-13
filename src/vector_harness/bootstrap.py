@@ -18,7 +18,7 @@ from vector_harness.assembly import (
     DEFAULT_MAX_CHARS,
     apply_patterns,
 )
-from vector_harness.core.config import apply_config, default_config_path
+from vector_harness.core.config import apply_config, default_config_path, log_settings_from_config
 from vector_harness.core.loop import Loop
 from vector_harness.core.provider import OpenAICompatibleProvider
 from vector_harness.core.session import Session
@@ -100,15 +100,17 @@ def load_provider(
     base_url: str | None = None,
 ) -> object:
     """合并环境、读配置文件、建提供方。缺配置时抛出 ``ProviderError``。"""
+    cfg_path = default_config_path() if config_file is None else config_file
     env = merged_env(
         os.environ if environ is None else environ,
         model=model,
         base_url=base_url,
     )
-    env = apply_config(
-        env, default_config_path() if config_file is None else config_file
+    env = apply_config(env, cfg_path)
+    log_cfg = log_settings_from_config(cfg_path)
+    return OpenAICompatibleProvider.from_env(
+        env, log_messages=log_cfg.get("log_llm_messages", False)
     )
-    return OpenAICompatibleProvider.from_env(env)
 
 
 def memory_path(

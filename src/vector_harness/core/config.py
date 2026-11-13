@@ -55,6 +55,19 @@ def settings_from_config_then_env(env: Mapping[str, str], path: Path) -> dict:
     return found
 
 
+def log_settings_from_config(path: Path) -> dict[str, bool]:
+    """读配置文件里的日志开关。文件不存在或没写该键时返回空字典。"""
+    data = _load_config(path)
+    result: dict[str, bool] = {}
+    key = "log_llm_messages"
+    if key in data:
+        value = data[key]
+        if not isinstance(value, bool):
+            raise ProviderError(f"invalid config {path}: {key} must be a boolean")
+        result[key] = value
+    return result
+
+
 def _load_config(path: Path) -> dict:
     """读配置文件。文件不存在时当作空配置。"""
     if not path.is_file():
