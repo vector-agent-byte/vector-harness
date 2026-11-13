@@ -6,27 +6,33 @@
 模式不进这个文件。调用方把压缩之类的变换放进 ``context_transforms``，
 用 ``install_prompt`` 和 ``replace_tool`` 挂上提示和工具。
 
-整体执行路径是：
-run(user_text)
-  │
-  ├─ 把用户消息追加到 session
-  │
-  └─ 循环，最多 max_steps 次
-       │
-       ├─ 读取历史消息，执行上下文变换
-       │
-       ├─ 请求模型，收集流式回复
-       │    └─ ProviderError → 返回 error
-       │
-       ├─ 没有工具调用
-       │    ├─ 保存助手回复
-       │    └─ 返回 complete
-       │
-       └─ 有工具调用
-            ├─ 保存助手正文和工具调用
-            ├─ 执行工具，把工具结果写入 session
-            ├─ 已达上限 → 返回 max_steps
-            └─ 否则进入下一次模型请求
+ 层次结构
+
+  用户输入
+      │
+      ▼
+  ToolReflect (Reflection)          ← 最外层包装（可选）
+      │  先跑 inner，完成后调审查官
+      │  不通过则把 critique 注入再跑一次
+      │
+      ▼
+  TodoPlan (PlanAndSolve)           ← 中间层包装（可选）
+      │  install_prompt → 让模型先用 update_todos 拆任务
+      │  while 未完成任务：继续推进
+      │
+      ▼
+  Loop (ReAct)                      ← 核心工具循环（始终存在）
+      │  用户消息 → 请求模型
+      │  有工具调用 → 执行 → 写回会话 → 下一步
+      │  无工具调用 → 返回 complete
+      │
+      ├─ 普通工具（Shell, ReadFile…）
+      │
+      └─ delegate 工具 (SubAgents)   ← 挂在 Loop 的工具列表里（可选）
+             │  模型调用 delegate(task=…)
+             │
+             └─ 创建一个子 Loop（内存会话，无 delegate 工具）
+                    └─ 子 Loop 独立跑完，返回 text 给父 Loop
 
 形成结果后，发送 RUN_END 事件并返回
 """
