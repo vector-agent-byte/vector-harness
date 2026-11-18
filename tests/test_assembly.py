@@ -195,7 +195,7 @@ def test_attach_replaces_a_tool_with_the_same_name(tmp_path: Path):
     attach(agent, skills_dir=tmp_path)
 
     assert _names(agent).count("read_skill") == 1
-    assert agent.loop.system.count("Skills:") == 1
+    assert agent.loop.system.count("可用技能：") == 1
     tool = next(item for item in agent.loop.tools if item.name == "read_skill")
     assert asyncio.run(tool.execute({"name": "greet"})) == "Hello\n"
 
@@ -304,4 +304,4 @@ def test_failed_reflection_plans_again():
     assert agent.run("任务") == "第二版"
     text = "\n".join(message.content for message in agent.get_history())
     assert text.index("1. one") < text.index("1. two")
-    assert "Reflection:" in text
+    assert "反思意见：" in text

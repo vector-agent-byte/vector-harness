@@ -54,14 +54,14 @@ class Calculator:
     """给模型调用的计算器。参数是一条算术表达式，例如 ``2 + 3 * 4``。"""
 
     name: str = "calculator"
-    description: str = "Evaluate an arithmetic expression such as 2 + 3 * 4."
+    description: str = "计算算术表达式，例如 2 + 3 * 4。"
     parameters: dict = field(
         default_factory=lambda: {
             "type": "object",
             "properties": {
                 "expression": {
                     "type": "string",
-                    "description": "Arithmetic expression using numbers and + - * /.",
+                    "description": "由数字和 + - * / 运算符组成的算术表达式。",
                 }
             },
             "required": ["expression"],

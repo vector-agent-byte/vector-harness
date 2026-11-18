@@ -27,7 +27,7 @@ from vector_harness.tools.fetch import WebFetch
 from vector_harness.tools.read import ReadFile
 from vector_harness.tools.shell import Shell
 
-DEFAULT_SYSTEM = "You are a capable agent. Use tools to finish the task in the workspace."
+DEFAULT_SYSTEM = "你是一名能力出色的智能助手。请使用工具在工作空间中完成任务。"
 
 
 def build_agent(

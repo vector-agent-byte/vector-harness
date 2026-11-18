@@ -40,7 +40,7 @@ def _write_skill_tree(root: Path) -> Path:
 def test_index_lists_skills_sorted_by_name(tmp_path: Path) -> None:
     skills = Skills(_write_skill_tree(tmp_path))
     index = skills.index_prompt()
-    assert index == "Skills:\n- alpha: first skill\n- beta: second skill"
+    assert index == "可用技能：\n- alpha: first skill\n- beta: second skill"
 
 
 def test_read_skill_returns_body_without_frontmatter(tmp_path: Path) -> None:

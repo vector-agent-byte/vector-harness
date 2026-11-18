@@ -35,7 +35,7 @@ class EditFile:
 
     root: Path
     name: str = "edit_file"
-    description: str = "Edit a file inside the workspace by replacing a unique string."
+    description: str = "通过替换唯一匹配的字符串，编辑工作空间中的文件。"
     parameters: dict = field(
         default_factory=lambda: {
             "type": "object",

@@ -81,7 +81,7 @@ class Skills:
         skills = self._load()
         if self.only is not None and not skills:
             return ""
-        lines = ["Skills:"]
+        lines = ["可用技能："]
         for name in sorted(skills):
             lines.append(f"- {name}: {skills[name].description}")
         return "\n".join(lines)
@@ -95,7 +95,7 @@ class Skills:
 class _ReadSkill:
     skills: Skills
     name: str = "read_skill"
-    description: str = "Read a skill by name."
+    description: str = "按名称读取技能的详细说明。"
     parameters: dict = field(
         default_factory=lambda: {
             "type": "object",

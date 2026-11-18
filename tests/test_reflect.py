@@ -8,7 +8,7 @@ import pytest
 
 from tests.scripted import ScriptedProvider, ScriptedTurn
 from vector_harness import Loop, Session, ToolCall
-from vector_harness.types import ProviderError, ProviderEvent
+from vector_harness.types import Message, ProviderError, ProviderEvent
 
 
 @pytest.fixture(scope="module", autouse=True)
@@ -60,7 +60,7 @@ def test_pass_keeps_the_answer_and_does_not_run_again() -> None:
     last_msg = provider.calls[1]["messages"][-1]["content"]
     assert "ship it" in last_msg
     assert "answer" in last_msg
-    assert all("Reflection:" not in message.content for message in session.load())
+    assert all("反思意见：" not in message.content for message in session.load())
 
 
 def test_fail_runs_critique_once() -> None:
@@ -91,7 +91,7 @@ def test_fail_runs_critique_once() -> None:
     assert provider.calls[1]["tools"] == ["submit_verdict"]
     critique = session.load()[2]
     assert critique.role == "user"
-    assert critique.content == "Reflection:\nadd a period"
+    assert critique.content == "反思意见：\nadd a period"
     assert provider.calls[2]["messages"][-1]["content"] == critique.content
 
 
@@ -112,7 +112,20 @@ def test_no_tool_call_uses_text_as_critique() -> None:
     assert result.text == "revised"
     assert result.steps == 3
     messages = session.load()
-    assert any("Reflection:\nneeds more detail" in m.content for m in messages)
+    assert any("反思意见：\nneeds more detail" in m.content for m in messages)
+
+
+@pytest.mark.parametrize("prefix", ["Reflection:", "反思意见："])
+def test_review_skips_legacy_and_chinese_reflection_messages(prefix: str) -> None:
+    messages = [
+        Message(role="user", content=f"{prefix}\n补充细节"),
+        Message(role="user", content="生成报表"),
+        Message(role="assistant", content="报表草稿"),
+    ]
+
+    review = _reflect()._review_message(messages)
+
+    assert review.content == "【用户要求】\n生成报表\n\n【助手草稿】\n报表草稿"
 
 
 def test_max_steps_skips_reflection() -> None:

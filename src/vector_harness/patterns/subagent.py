@@ -17,7 +17,7 @@ class _Delegate:
     max_steps: int = 50
     host: Loop | None = field(default=None, repr=False, compare=False)
     name: str = "delegate"
-    description: str = "Delegate a task to a child agent."
+    description: str = "将任务委托给子代理执行。"
     parameters: dict = field(
         default_factory=lambda: {
             "type": "object",

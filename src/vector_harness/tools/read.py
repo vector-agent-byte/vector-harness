@@ -31,7 +31,7 @@ class ReadFile:
 
     root: Path
     name: str = "read_file"
-    description: str = "Read a file inside the workspace."
+    description: str = "读取工作空间中的文件。"
     parameters: dict = field(
         default_factory=lambda: {
             "type": "object",

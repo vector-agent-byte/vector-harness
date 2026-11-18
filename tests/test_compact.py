@@ -63,7 +63,7 @@ def test_compaction_keeps_a_split_tool_group_together() -> None:
 
     assert [message.content for message in messages] == snapshot
     assert len(messages) == 5
-    assert result[0].content == "[compacted context]\nSUM"
+    assert result[0].content == "[上下文摘要]\nSUM"
     assert [call.id for call in result[1].tool_calls or []] == ["c1", "c2"]
     assert [(message.role, message.tool_call_id) for message in result[1:]] == [
         ("assistant", None),
@@ -107,7 +107,7 @@ def test_compacts_prefix_and_keeps_last_with_empty_tools() -> None:
 
     assert len(result) == 2
     assert result[0].role == "user"
-    assert result[0].content == "[compacted context]\nSHORT"
+    assert result[0].content == "[上下文摘要]\nSHORT"
     assert result[1] is messages[2]
     assert compaction.last_failure is None
     assert len(provider.calls) == 1
@@ -128,7 +128,7 @@ def test_tool_call_arguments_count_toward_max_chars() -> None:
 
     result = run(compaction.apply(messages))
 
-    assert result[0].content.startswith("[compacted context]\n")
+    assert result[0].content.startswith("[上下文摘要]\n")
     assert result[1] is messages[1]
     assert len(provider.calls) == 1
 
@@ -197,7 +197,7 @@ def test_summarizer_failure_returns_original_messages(tmp_path) -> None:
         assert got.content == original.content
         assert got.tool_calls == original.tool_calls
         assert got.tool_call_id == original.tool_call_id
-        assert "[compacted context]" not in got.content
+        assert "[上下文摘要]" not in got.content
 
     assert len(before) == len(after)
     for first, second in zip(before, after, strict=True):
@@ -205,5 +205,5 @@ def test_summarizer_failure_returns_original_messages(tmp_path) -> None:
         assert first.content == second.content
         assert first.tool_calls == second.tool_calls
         assert first.tool_call_id == second.tool_call_id
-        assert "[compacted context]" not in first.content
-        assert "[compacted context]" not in second.content
+        assert "[上下文摘要]" not in first.content
+        assert "[上下文摘要]" not in second.content

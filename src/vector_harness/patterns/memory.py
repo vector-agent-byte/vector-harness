@@ -12,7 +12,7 @@ from vector_harness.types import Tool
 class RememberTool:
     path: Path
     name: str = "remember"
-    description: str = "Append a line to long-term memory."
+    description: str = "向长期记忆中追加一条记录。"
     parameters: dict = field(
         default_factory=lambda: {
             "type": "object",

@@ -9,16 +9,16 @@ from vector_harness.core.turn import collect_turn
 from vector_harness.types import Message, ProviderError, Role, RunResult
 
 _REFLECT_SYSTEM = (
-    "你是审查官，只审查、不执行。\n"
+    "你是审查官，只审查、不执行。请用中文撰写审查意见。\n"
     "对照用户原始要求和助手草稿，调用 submit_verdict 交回结论。\n"
     "通过：草稿已回答用户要求，没有声称完成但实际未做的步骤。\n"
-    "不通过：critique 必须写出要补的具体点和改法。"
+    "不通过：critique（审查意见）必须写出要补的具体点和改法。"
 )
 
 
 def format_reflection(critique: str) -> str:
-    """把批评收成 ``Reflection:`` 开头的用户消息，交给下一轮执行。"""
-    return f"Reflection:\n{critique}"
+    """把批评收成中文反思消息，交给下一轮执行。"""
+    return f"反思意见：\n{critique}"
 
 
 class SubmitVerdictTool:
@@ -45,7 +45,7 @@ class SubmitVerdictTool:
     }
 
     async def execute(self, arguments: dict) -> str:
-        return "verdict recorded"
+        return "已记录审查结论"
 
 
 def _extract_verdict(turn) -> dict | None:
@@ -87,7 +87,7 @@ class ToolReflect:
             (
                 m.content
                 for m in messages
-                if m.role == "user" and not m.content.startswith("Reflection:")
+                if m.role == "user" and not m.content.startswith(("反思意见：", "Reflection:"))
             ),
             "",
         )
@@ -140,7 +140,7 @@ class ToolReflect:
 
         if verdict["pass"]:
             self.loop.session.append(
-                Message(role=Role.ASSISTANT, content=f"[Reflection] 通过 — {verdict['critique']}")
+                Message(role=Role.ASSISTANT, content=f"[反思] 通过 — {verdict['critique']}")
             )
             return RunResult(
                 status=result.status,

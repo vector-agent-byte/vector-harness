@@ -12,9 +12,9 @@ VALID_STATUS = {"pending", "in_progress", "completed"}
 STATUS_ICON = {"pending": "[ ]", "in_progress": "[~]", "completed": "[✓]"}
 
 _PLAN_PROMPT = (
-    "当请求需要多个步骤时，先调用 update_todos 把任务拆成 todolist，再按顺序执行。\n"
+    "当请求需要多个步骤时，先调用 update_todos 把任务拆成待办列表，再按顺序执行。\n"
     "每步开始前把状态改为 in_progress，完成后改为 completed，同一时间只许一项 in_progress。\n"
-    "简单的一句话问答不必生成 todolist。"
+    "简单的一句话问答不必生成待办列表。"
 )
 
 _CONTINUE_PROMPT = (
@@ -37,7 +37,7 @@ class UpdateTodosTool:
 
     name = "update_todos"
     description = (
-        "创建或更新当前任务的 todolist（全量覆盖，非增量）。"
+        "创建或更新当前任务的待办列表（全量覆盖，非增量）。"
         "同一时间至多一个任务为 in_progress。"
     )
     parameters = {
@@ -45,7 +45,7 @@ class UpdateTodosTool:
         "properties": {
             "todos": {
                 "type": "array",
-                "description": "完整的 todo 列表，按执行顺序排列",
+                "description": "完整的待办列表，按执行顺序排列",
                 "items": {
                     "type": "object",
                     "properties": {

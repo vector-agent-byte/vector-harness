@@ -6,7 +6,7 @@ from vector_harness.core.loop import Loop
 from vector_harness.core.turn import collect_text
 from vector_harness.types import Message
 
-_SUMMARY_SYSTEM = "Summarize the conversation prefix. Preserve facts, decisions, and file paths."
+_SUMMARY_SYSTEM = "请用中文总结对话的前半部分，保留事实、已作出的决定和文件路径。"
 
 
 def _char_count(messages: list[Message]) -> int:
@@ -102,7 +102,7 @@ class Compaction:
         self.last_failure = None
         compacted = Message(
             role="user",
-            content=f"[compacted context]\n{text}",
+            content=f"[上下文摘要]\n{text}",
         )
         return [compacted, *tail]
 

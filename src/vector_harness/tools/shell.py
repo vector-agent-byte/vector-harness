@@ -26,7 +26,7 @@ class Shell:
     processes: list | None = None
     process_lock: threading.Lock | None = None
     name: str = "shell"
-    description: str = "Run a shell command inside the workspace."
+    description: str = "在工作空间中执行一条 shell 命令。"
     parameters: dict = field(
         default_factory=lambda: {
             "type": "object",

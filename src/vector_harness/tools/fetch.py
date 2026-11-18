@@ -17,26 +17,26 @@ class WebFetch:
     timeout: float = 30.0
     name: str = "web_fetch"
     description: str = (
-        "Fetch a URL and return the response body as text. "
-        "Use for reading web pages, APIs, or any public HTTP resource."
+        "请求指定 URL，并以文本形式返回响应正文。"
+        "用于读取网页、调用 API 或访问其他公开的 HTTP 资源。"
     )
     parameters: dict = field(
         default_factory=lambda: {
             "type": "object",
             "properties": {
-                "url": {"type": "string", "description": "The URL to fetch."},
+                "url": {"type": "string", "description": "要请求的 URL。"},
                 "method": {
                     "type": "string",
                     "enum": ["GET", "POST"],
-                    "description": "HTTP method, default GET.",
+                    "description": "HTTP 请求方法，默认为 GET。",
                 },
                 "body": {
                     "type": "string",
-                    "description": "Request body for POST.",
+                    "description": "POST 请求的正文。",
                 },
                 "headers": {
                     "type": "object",
-                    "description": "Extra HTTP headers as key-value pairs.",
+                    "description": "以键值对形式提供的额外 HTTP 请求头。",
                 },
             },
             "required": ["url"],
