@@ -10,6 +10,9 @@ from vector_harness.web_sessions import (
     read_messages,
     session_mode,
     set_session_mode,
+    session_skills,
+    set_session_skills,
+    delete_session,
 )
 
 
@@ -81,6 +84,63 @@ def test_session_modes_handle_legacy_and_invalid_values(tmp_path: Path):
         set_session_mode(tmp_path, "f" * 32, "react")
     (tmp_path / ".vector" / "sessions" / f"{session_id}.mode").write_text("unknown", encoding="utf-8")
     assert session_mode(tmp_path, session_id) is None
+
+
+def test_skill_selections_persist_all_subset_and_none_independently(tmp_path: Path):
+    first = create_session(tmp_path)
+    second = create_session(tmp_path)
+    assert session_skills(tmp_path, first) is None
+    path = tmp_path / ".vector" / "sessions" / f"{first}.skills.json"
+    assert path.is_file()
+    set_session_skills(tmp_path, first, ["alpha", "beta", "alpha"])
+    assert session_skills(tmp_path, first) == ["alpha", "beta"]
+    assert session_skills(tmp_path, second) is None
+    set_session_skills(tmp_path, first, [])
+    assert session_skills(tmp_path, first) == []
+    set_session_skills(tmp_path, first, None)
+    assert session_skills(tmp_path, first) is None
+    delete_session(tmp_path, first)
+    assert not path.exists()
+
+
+def test_legacy_single_skill_migrates_without_losing_selection(tmp_path: Path):
+    session_id = create_session(tmp_path)
+    directory = tmp_path / ".vector" / "sessions"
+    (directory / f"{session_id}.skills.json").unlink()
+    legacy = directory / f"{session_id}.skill"
+    legacy.write_text("alpha\n", encoding="utf-8")
+    assert session_skills(tmp_path, session_id) == ["alpha"]
+    set_session_skills(tmp_path, session_id, ["alpha", "beta"])
+    assert session_skills(tmp_path, session_id) == ["alpha", "beta"]
+    assert not legacy.exists()
+
+
+def test_failed_skill_save_preserves_previous_selection(tmp_path: Path, monkeypatch):
+    session_id = create_session(tmp_path)
+    set_session_skills(tmp_path, session_id, ["alpha"])
+
+    def fail_replace(self, target):
+        raise PermissionError("locked")
+
+    monkeypatch.setattr(Path, "replace", fail_replace)
+    with pytest.raises(PermissionError):
+        set_session_skills(tmp_path, session_id, ["beta"])
+    assert session_skills(tmp_path, session_id) == ["alpha"]
+    assert not (tmp_path / ".vector" / "sessions" / f"{session_id}.skills.json.tmp").exists()
+
+
+def test_corrupt_skill_selection_does_not_enable_all_skills(tmp_path: Path):
+    session_id = create_session(tmp_path)
+    path = tmp_path / ".vector" / "sessions" / f"{session_id}.skills.json"
+    for text in ['{', '{}', '{"names": 1}', '{"names": [null]}']:
+        path.write_text(text, encoding="utf-8")
+        assert session_skills(tmp_path, session_id) == []
+    with pytest.raises(ValueError):
+        set_session_skills(tmp_path, "../outside", [])
+    with pytest.raises(ValueError):
+        set_session_skills(tmp_path, session_id, [""])
+    with pytest.raises(FileNotFoundError):
+        set_session_skills(tmp_path, "f" * 32, [])
 
 
 def test_missing_directory_lists_nothing(tmp_path: Path):

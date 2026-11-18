@@ -2,6 +2,8 @@ import { useCallback, useEffect, useRef, useState } from "react"
 import type { CSSProperties, FormEvent, KeyboardEvent, MouseEvent, PointerEvent as ReactPointerEvent } from "react"
 import { MODES, normalizeMode } from "./modes.ts"
 import type { ModeId } from "./modes.ts"
+import { sessionSkillSelection, skillSelectionLabel, toggleSkill } from "./skills.ts"
+import type { SkillSelection } from "./skills.ts"
 import { entryMenu as entryMenuLabels, findListableDir, highlightCode, listingGenerationIsCurrent, refreshMayReplaceDraft, REFRESH_MS, shouldShowPicker, viewedPathAfter } from "./dirPath.ts"
 import {
   normalizeMessages,
@@ -76,6 +78,10 @@ export default function App() {
   const [pickerError, setPickerError] = useState<string | null>(null)
   const [pathDraft, setPathDraft] = useState("")
   const [skillOpen, setSkillOpen] = useState(false)
+  const [skillDraft, setSkillDraft] = useState<SkillSelection>(null)
+  const [skillSearch, setSkillSearch] = useState("")
+  const [skillError, setSkillError] = useState<string | null>(null)
+  const [savingSkills, setSavingSkills] = useState(false)
   const [now, setNow] = useState(() => Date.now())
   const [sessionMenu, setSessionMenu] = useState<SessionMenu | null>(null)
   const [entryMenu, setEntryMenu] = useState<EntryMenu | null>(null)
@@ -96,7 +102,9 @@ export default function App() {
   const readingStreamRef = useRef(false)
   const sendingRef = useRef(false)
   const savingModeRef = useRef(false)
-  const modeRevisionRef = useRef(0)
+  const savingSkillsRef = useRef(false)
+  const skillSessionRef = useRef<string | null>(null)
+  const settingsRevisionRef = useRef(0)
   const streamSessionRef = useRef<string | null>(null)
   const creatingRef = useRef(false)
   const pendingToolsRef = useRef(0)
@@ -129,7 +137,7 @@ export default function App() {
   workdirRef.current = workdir
 
   const refreshList = useCallback(async (): Promise<SessionList | null> => {
-    const modeRevision = modeRevisionRef.current
+    const settingsRevision = settingsRevisionRef.current
     try {
       const response = await fetch("/api/sessions", { cache: "no-store" })
       if (!response.ok) {
@@ -140,7 +148,7 @@ export default function App() {
       }
       const data = parseSessionList(await response.json())
       if (!data) return null
-      if (modeRevision === modeRevisionRef.current && !savingModeRef.current) setSessions(data.sessions)
+      if (settingsRevision === settingsRevisionRef.current && !savingModeRef.current && !savingSkillsRef.current) setSessions(data.sessions)
       setRunningId(data.running_id)
       setModelName(data.model)
       return data
@@ -152,7 +160,7 @@ export default function App() {
   }, [])
 
   const fetchSessionMessages = useCallback(async (id: string): Promise<ChatMessage[] | null> => {
-    const modeRevision = modeRevisionRef.current
+    const settingsRevision = settingsRevisionRef.current
     const response = await fetch(`/api/sessions/${encodeURIComponent(id)}`, {
       cache: "no-store",
     })
@@ -164,9 +172,9 @@ export default function App() {
       }
       return null
     }
-    const body = (await response.json()) as { messages?: unknown; mode?: unknown }
-    if (modeRevision === modeRevisionRef.current && !savingModeRef.current) {
-      setSessions(current => current.map(item => item.id === id ? { ...item, mode: normalizeMode(body.mode) } : item))
+    const body = (await response.json()) as Record<string, unknown>
+    if (settingsRevision === settingsRevisionRef.current && !savingModeRef.current && !savingSkillsRef.current) {
+      setSessions(current => current.map(item => item.id === id ? { ...item, mode: normalizeMode(body.mode), skills: sessionSkillSelection(body) } : item))
     }
     return normalizeMessages(body.messages)
   }, [refreshList])
@@ -258,6 +266,15 @@ export default function App() {
   }, [openId])
 
   useEffect(() => {
+    if (!skillOpen) return
+    function onKey(event: globalThis.KeyboardEvent) {
+      if (event.key === "Escape" && !savingSkillsRef.current) setSkillOpen(false)
+    }
+    window.addEventListener("keydown", onKey)
+    return () => window.removeEventListener("keydown", onKey)
+  }, [skillOpen])
+
+  useEffect(() => {
     if (propsId === null && !pickerOpen) return
     function onKey(event: globalThis.KeyboardEvent) {
       if (event.key !== "Escape") return
@@ -328,7 +345,7 @@ export default function App() {
     }
   }, [messages, live, openId])
 
-  const dialogKey = pickerOpen
+  const dialogKey = skillOpen ? "skills" : pickerOpen
     ? "picker"
     : preview
       ? "preview"
@@ -579,9 +596,9 @@ export default function App() {
 
   async function chooseMode(mode: ModeId) {
     const sessionId = openIdRef.current
-    if (!sessionId || runningId !== null || readingStreamRef.current || sendingRef.current || savingModeRef.current) return
+    if (!sessionId || runningId !== null || readingStreamRef.current || sendingRef.current || savingModeRef.current || savingSkillsRef.current) return
     savingModeRef.current = true
-    modeRevisionRef.current += 1
+    settingsRevisionRef.current += 1
     setSavingMode(true)
     try {
       const response = await fetch(`/api/sessions/${encodeURIComponent(sessionId)}/mode`, {
@@ -599,34 +616,51 @@ export default function App() {
     } catch {
       setErrorText("bad_request")
     } finally {
-      modeRevisionRef.current += 1
+      settingsRevisionRef.current += 1
       savingModeRef.current = false
       setSavingMode(false)
     }
   }
 
-  async function chooseSkill(name: string | null) {
-    const sessionId = openIdRef.current
-    if (!sessionId || runningId !== null || readingStreamRef.current) return
+  function openSkillPicker() {
+    if (!openSession || inputLocked) return
+    skillSessionRef.current = openSession.id
+    setSkillDraft(openSession.skills === null ? null : [...openSession.skills])
+    setSkillSearch("")
+    setSkillError(null)
+    setSkillOpen(true)
+    void loadSkills()
+  }
+
+  async function saveSkills() {
+    const sessionId = skillSessionRef.current
+    if (!sessionId || runningId !== null || readingStreamRef.current || sendingRef.current || savingSkillsRef.current || savingModeRef.current) return
+    savingSkillsRef.current = true
+    settingsRevisionRef.current += 1
+    setSavingSkills(true)
+    setSkillError(null)
     try {
-      const response = await fetch(`/api/sessions/${encodeURIComponent(sessionId)}/skill`, {
+      const response = await fetch(`/api/sessions/${encodeURIComponent(sessionId)}/skills`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name }),
+        body: JSON.stringify({ names: skillDraft }),
       })
       if (!response.ok) {
-        if (response.status >= 400 && response.status < 500) setErrorText(await readError(response))
+        setSkillError(errorLabel(await readError(response)))
         return
       }
-      const body = (await response.json()) as { skill?: unknown }
-      const skill = typeof body.skill === "string" && body.skill !== "" ? body.skill : null
+      const body = (await response.json()) as Record<string, unknown>
       setSessions((current) =>
-        current.map((item) => (item.id === sessionId ? { ...item, skill } : item)),
+        current.map((item) => (item.id === sessionId ? { ...item, skills: sessionSkillSelection(body) } : item)),
       )
       setErrorText(null)
       setSkillOpen(false)
     } catch {
-      setErrorText("bad_request")
+      setSkillError("技能选择保存失败，请重试")
+    } finally {
+      settingsRevisionRef.current += 1
+      savingSkillsRef.current = false
+      setSavingSkills(false)
     }
   }
 
@@ -869,7 +903,7 @@ export default function App() {
       setSessions((current) =>
         current.some((item) => item.id === id)
           ? current
-          : [{ id, title: id, updated_at: Date.now(), skill: null, mode: "react", started_at: null, duration_ms: null }, ...current],
+          : [{ id, title: id, updated_at: Date.now(), skills: null, mode: "react", started_at: null, duration_ms: null }, ...current],
       )
       setSkillOpen(false)
       await refreshList()
@@ -942,7 +976,7 @@ export default function App() {
   async function send() {
     const text = draft
     if (text.trim() === "") return
-    if (!openId || runningId !== null || readingStream || sendingRef.current || savingModeRef.current) return
+    if (!openId || runningId !== null || readingStream || sendingRef.current || savingModeRef.current || savingSkillsRef.current) return
     const sessionId = openId
     sendingRef.current = true
     readingStreamRef.current = true
@@ -1095,13 +1129,18 @@ export default function App() {
   }
 
   const openSession = sessions.find((session) => session.id === openId) ?? null
-  const selectedSkill = openSession?.skill ?? null
+  const selectedSkills = openSession?.skills ?? null
+  const skillOptions = [
+    ...skills,
+    ...(skillDraft ?? []).filter(name => !skills.some(skill => skill.name === name))
+      .map(name => ({ name, description: "当前不可用，请取消选择后保存" })),
+  ].filter(skill => `${skill.name} ${skill.description}`.toLowerCase().includes(skillSearch.trim().toLowerCase()))
   const mode = openSession?.mode ?? "react"
   const propsSession = sessions.find((session) => session.id === propsId) ?? null
   const propsTiming = propsSession
     ? sessionProperties(propsSession, propsSession.id === runningId, now)
     : null
-  const inputLocked = runningId !== null || readingStream || savingMode
+  const inputLocked = runningId !== null || readingStream || savingMode || savingSkills
   const showLive =
     live !== null &&
     streamSessionId !== null &&
@@ -1161,7 +1200,7 @@ export default function App() {
                 >
                   <span className="session-title">
                     {session.title}
-                    {session.skill ? <span className="session-skill">{session.skill}</span> : null}
+                    <span className="session-skill">{skillSelectionLabel(session.skills)}</span>
                   </span>
                   {running
                     ? <span className="running-mark">运行中</span>
@@ -1455,38 +1494,14 @@ export default function App() {
                 <div className="skill-row">
                   <button
                     type="button"
-                    className={selectedSkill ? "mode is-selected" : "mode"}
-                    disabled={inputLocked}
+                    className={selectedSkills === null || selectedSkills.length > 0 ? "mode is-selected" : "mode"}
+                    disabled={inputLocked || !openId}
                     aria-expanded={skillOpen}
-                    onClick={() => setSkillOpen((open) => !open)}
+                    aria-haspopup="dialog"
+                    onClick={openSkillPicker}
                   >
-                    {selectedSkill ? `技能 · ${selectedSkill}` : "选择技能"}
+                    {skillSelectionLabel(selectedSkills)}
                   </button>
-                  {skillOpen ? (
-                    <div className="skill-menu" role="listbox" aria-label="技能">
-                      <button
-                        type="button"
-                        className={selectedSkill === null ? "skill-option is-selected" : "skill-option"}
-                        onClick={() => void chooseSkill(null)}
-                      >
-                        <span className="skill-name">不使用</span>
-                      </button>
-                      {skills.map((skill) => (
-                        <button
-                          key={skill.name}
-                          type="button"
-                          className={
-                            skill.name === selectedSkill ? "skill-option is-selected" : "skill-option"
-                          }
-                          onClick={() => void chooseSkill(skill.name)}
-                        >
-                          <span className="skill-name">{skill.name}</span>
-                          <span className="skill-description">{skill.description}</span>
-                        </button>
-                      ))}
-                      {skills.length === 0 ? <div className="skill-empty">没有可选择的技能</div> : null}
-                    </div>
-                  ) : null}
                 </div>
                 <div className="modes" role="radiogroup" aria-label="模式">
                   {MODES.map((item) => (
@@ -1587,10 +1602,84 @@ export default function App() {
           </ul>
         ) : null}
       </aside>
+      {skillOpen ? (
+        <div className="props-backdrop" onClick={() => { if (!savingSkills) setSkillOpen(false) }}>
+          <div
+            {...dialogFrame("picker-dialog skills-dialog")}
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="skills-dialog-title"
+            onClick={event => event.stopPropagation()}
+          >
+            <div id="skills-dialog-title" className="props-heading" onPointerDown={beginDialogDrag}>选择会话技能</div>
+            <p className="skills-dialog-hint">技能仅应用于当前会话，保存后刷新或重新打开仍会保留。全选会自动包含新增技能。</p>
+            <div className="skills-toolbar">
+              <div className="skills-search">
+                <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" aria-hidden="true">
+                  <circle cx="8.5" cy="8.5" r="5.5" />
+                  <path d="m13 13 4 4" />
+                </svg>
+                <input
+                  type="search"
+                  aria-label="搜索技能"
+                  placeholder="搜索技能名称或说明…"
+                  value={skillSearch}
+                  onChange={event => setSkillSearch(event.target.value)}
+                />
+              </div>
+              <div className="skills-bulk-actions" role="group" aria-label="批量选择技能">
+                <button type="button" aria-pressed={skillDraft === null} disabled={savingSkills} onClick={() => setSkillDraft(null)}>
+                  <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                    <path d="m3 8 3 3 7-7" />
+                  </svg>
+                  全选
+                </button>
+                <button type="button" aria-pressed={skillDraft !== null && skillDraft.length === 0} disabled={savingSkills} onClick={() => setSkillDraft([])}>
+                  <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" aria-hidden="true">
+                    <path d="M4 8h8" />
+                  </svg>
+                  全不选
+                </button>
+              </div>
+            </div>
+            <div className="skills-selection-count" aria-live="polite">
+              {skillDraft === null ? `已全选 · ${skills.length} 项技能` : `已选择 ${skillDraft.length} 项技能`}
+            </div>
+            <div className="skills-grid" role="group" aria-label="可选技能">
+              {skillOptions.map(skill => {
+                const checked = skillDraft === null || skillDraft.includes(skill.name)
+                return (
+                  <label key={skill.name} className={`skill-card${checked ? " is-selected" : ""}`}>
+                    <input
+                      type="checkbox"
+                      checked={checked}
+                      disabled={savingSkills}
+                      onChange={() => setSkillDraft(current => toggleSkill(current, skill.name, skills.map(item => item.name)))}
+                    />
+                    <span className="skill-card-content">
+                      <span className="skill-name">{skill.name}</span>
+                      <span className="skill-description">{skill.description}</span>
+                    </span>
+                  </label>
+                )
+              })}
+              {skillOptions.length === 0 ? <div className="skill-empty">{skills.length === 0 ? "没有可选择的技能" : "没有匹配的技能"}</div> : null}
+            </div>
+            {skillError ? <div className="picker-error" role="alert">{skillError}</div> : null}
+            <div className="dir-actions">
+              <button type="button" disabled={savingSkills} onClick={() => setSkillOpen(false)}>取消</button>
+              <button type="button" className="skills-save" disabled={savingSkills || runningId !== null} onClick={() => void saveSkills()}>
+                {savingSkills ? "正在保存…" : "保存选择"}
+              </button>
+            </div>
+            <div className="dialog-resize" onPointerDown={beginDialogResize} />
+          </div>
+        </div>
+      ) : null}
       {shouldShowPicker(pickerOpen, pickerBrowse !== null) ? (
         <div className="props-backdrop" onClick={() => setPickerOpen(false)}>
           <div
-            {...dialogFrame("picker-dialog")}
+            {...dialogFrame("picker-dialog workdir-picker")}
             role="dialog"
             aria-label="选择工作目录"
             onClick={(event) => event.stopPropagation()}
@@ -1804,7 +1893,7 @@ export default function App() {
               <dt>标题</dt>
               <dd>{propsSession.title}</dd>
               <dt>技能</dt>
-              <dd>{propsSession.skill ?? "未选择"}</dd>
+              <dd>{propsSession.skills === null ? "全部技能" : propsSession.skills.join("、") || "不使用技能"}</dd>
               <dt>触发</dt>
               <dd>{propsTiming?.trigger}</dd>
               <dt>耗时</dt>

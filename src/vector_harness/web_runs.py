@@ -21,7 +21,7 @@ from vector_harness.core.session import Session
 from vector_harness.tools.shell import Shell, signal_kill
 from vector_harness.types import Message, ProviderEvent, Role
 from vector_harness.web_children import ChildTrace
-from vector_harness.web_sessions import begin_run, finish_run, session_skill
+from vector_harness.web_sessions import begin_run, finish_run, session_skills
 
 _logger = logging.getLogger("vector_harness.web")
 
@@ -142,13 +142,13 @@ class RunManager:
     def _build(self, *, session: Session, plan: bool, reflect: bool, subagents: bool = False):
         """按这一份会话选中的技能装配这一轮。"""
         settings = self.settings
-        chosen = session_skill(settings.workspace, session.path.stem)
+        chosen = session_skills(settings.workspace, session.path.stem)
         return build_agent(
             provider=self.provider,
             workspace=settings.workdir(),
             session=session,
-            skills_dir=settings.skills_dir if chosen else None,
-            skill_name=chosen,
+            skills_dir=settings.skills_dir if chosen != [] else None,
+            skill_names=chosen,
             memory_path=settings.memory_path,
             compact=settings.compact,
             plan=plan,

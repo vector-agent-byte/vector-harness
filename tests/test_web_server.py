@@ -64,6 +64,7 @@ def test_lists_creates_and_reads_a_session(tmp_path: Path):
                 "id": session_id,
                 "messages": [],
                 "skill": None,
+                "skills": None,
                 "mode": "react",
                 "started_at": None,
                 "duration_ms": None,
@@ -645,6 +646,85 @@ def test_each_session_keeps_its_own_skill(tmp_path: Path):
         server.shutdown()
 
 
+def test_multi_skill_execution_defaults_to_all_and_honors_subset_and_none(tmp_path: Path):
+    skills = tmp_path / "skills"
+    for name in ["alpha", "beta", "gamma"]:
+        _skill_file(skills, name, f"{name} description")
+    session_id = create_session(tmp_path)
+    provider = ScriptedProvider([
+        ScriptedTurn(content="all"),
+        ScriptedTurn(tool_calls=[ToolCall(id="read-unselected", name="read_skill", arguments={"name": "gamma"})]),
+        ScriptedTurn(content="subset"),
+        ScriptedTurn(content="none"),
+        ScriptedTurn(content="all again"),
+    ])
+    server = WebServer(WebSettings(workspace=tmp_path, skills_dir=skills), provider)
+    server.start()
+    try:
+        with httpx.Client(trust_env=False) as client:
+            base = f"http://127.0.0.1:{server.port}/api/sessions/{session_id}"
+            assert client.post(f"{base}/messages", json={"text": "default"}).status_code == 200
+            for name in ["alpha", "beta", "gamma"]:
+                assert f"- {name}:" in provider.calls[0]["system"]
+            chosen = client.post(f"{base}/skills", json={"names": ["alpha", "beta", "alpha"]})
+            assert chosen.json() == {"id": session_id, "skills": ["alpha", "beta"]}
+            assert client.post(f"{base}/messages", json={"text": "subset"}).status_code == 200
+            assert "- alpha:" in provider.calls[1]["system"]
+            assert "- beta:" in provider.calls[1]["system"]
+            assert "- gamma:" not in provider.calls[1]["system"]
+            messages = client.get(base).json()["messages"]
+            assert any(message.get("tool_call_id") == "read-unselected" and "Unknown skill: gamma" in message["content"] for message in messages)
+            assert client.post(f"{base}/skills", json={"names": []}).status_code == 200
+            assert client.post(f"{base}/messages", json={"text": "none"}).status_code == 200
+            assert "read_skill" not in provider.calls[3]["tools"]
+            assert "- alpha:" not in provider.calls[3]["system"]
+            assert client.post(f"{base}/skills", json={"names": None}).status_code == 200
+            _skill_file(skills, "delta", "new skill")
+            assert client.post(f"{base}/messages", json={"text": "all again"}).status_code == 200
+            assert "- delta: new skill" in provider.calls[4]["system"]
+    finally:
+        server.shutdown()
+
+
+def test_multi_skill_selection_survives_restart_and_rejects_invalid_updates(tmp_path: Path):
+    skills = tmp_path / "skills"
+    for name in ["alpha", "beta"]:
+        _skill_file(skills, name, name)
+    server = WebServer(WebSettings(workspace=tmp_path, skills_dir=skills), provider=object())
+    server.start()
+    try:
+        with httpx.Client(trust_env=False) as client:
+            base = f"http://127.0.0.1:{server.port}"
+            first = client.post(f"{base}/api/sessions").json()["id"]
+            second = client.post(f"{base}/api/sessions").json()["id"]
+            assert client.get(f"{base}/api/sessions/{first}").json()["skills"] is None
+            endpoint = f"{base}/api/sessions/{first}/skills"
+            assert client.post(endpoint, json={"names": ["alpha", "beta"]}).status_code == 200
+            for payload in [{}, {"names": "alpha"}, {"names": [None]}, {"names": [""]}]:
+                assert client.post(endpoint, json=payload).status_code == 400
+            assert client.post(endpoint, json={"names": ["missing"]}).json() == {"error": "unknown_skill"}
+            assert client.post(f"{base}/api/sessions/bad/skills", json={"names": []}).status_code == 400
+            assert client.post(f"{base}/api/sessions/{'f' * 32}/skills", json={"names": []}).status_code == 404
+            assert server.runs.acquire()
+            try:
+                assert client.post(endpoint, json={"names": []}).status_code == 409
+            finally:
+                server.runs.release()
+            listed = client.get(f"{base}/api/sessions").json()["sessions"]
+            assert {item["id"]: item["skills"] for item in listed} == {first: ["alpha", "beta"], second: None}
+    finally:
+        server.shutdown()
+    restarted = WebServer(WebSettings(workspace=tmp_path, skills_dir=skills), provider=object())
+    restarted.start()
+    try:
+        with httpx.Client(trust_env=False) as client:
+            base = f"http://127.0.0.1:{restarted.port}"
+            assert client.get(f"{base}/api/sessions/{first}").json()["skills"] == ["alpha", "beta"]
+            assert client.get(f"{base}/api/sessions/{second}").json()["skills"] is None
+    finally:
+        restarted.shutdown()
+
+
 def test_turn_prompt_contains_only_the_selected_skill(tmp_path: Path):
     skills = tmp_path / "skills"
     _skill_file(skills, "alpha", "first skill")
@@ -658,6 +738,7 @@ def test_turn_prompt_contains_only_the_selected_skill(tmp_path: Path):
     try:
         base = f"http://127.0.0.1:{server.port}"
         with httpx.Client(trust_env=False) as client:
+            assert client.post(f"{base}/api/sessions/{session_id}/skills", json={"names": []}).status_code == 200
             bare = client.post(
                 f"{base}/api/sessions/{session_id}/messages",
                 json={"text": "先不选"},
@@ -862,6 +943,7 @@ def test_delete_removes_the_session_and_its_skill(tmp_path: Path):
             directory = tmp_path / ".vector" / "sessions"
             assert not (directory / f"{session_id}.jsonl").exists()
             assert not (directory / f"{session_id}.skill").exists()
+            assert not (directory / f"{session_id}.skills.json").exists()
             listed = client.get(f"{base}/api/sessions").json()["sessions"]
             assert [item["id"] for item in listed] == [other]
     finally:

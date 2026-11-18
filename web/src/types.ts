@@ -1,10 +1,11 @@
 import type { ModeId } from "./modes.ts"
+import type { SkillSelection } from "./skills.ts"
 
 export type SessionItem = {
   id: string
   title: string
   updated_at: number
-  skill: string | null
+  skills: SkillSelection
   mode: ModeId
   started_at: number | null
   duration_ms: number | null

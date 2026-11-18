@@ -37,10 +37,10 @@ class _Skill:
 
 
 class Skills:
-    def __init__(self, directory: Path, *, only: str | None = None) -> None:
+    def __init__(self, directory: Path, *, only: str | list[str] | None = None) -> None:
         """技能目录。读取时才扫文件，构造时不加载。
 
-        ``only`` 有值时，索引和读取都只保留这一个名字。
+        ``only`` 可指定一个或多个名字；None 表示全部，空列表表示不选。
         """
         self.directory = directory
         self.only = only
@@ -63,10 +63,8 @@ class Skills:
             found[name] = _Skill(name=name, description=meta["description"], body=body)
         if self.only is None:
             return found
-        skill = found.get(self.only)
-        if skill is None:
-            return {}
-        return {self.only: skill}
+        names = {self.only} if isinstance(self.only, str) else set(self.only)
+        return {name: skill for name, skill in found.items() if name in names}
 
     def catalog(self) -> list[dict[str, str]]:
         """按名字排序的技能清单。不受 ``only`` 限制，供页面展示。"""
@@ -118,10 +116,10 @@ class _ReadSkill:
         return skill.body
 
 
-def attach_skills(loop: Loop, directory: Path, *, only: str | None = None) -> None:
+def attach_skills(loop: Loop, directory: Path, *, only: str | list[str] | None = None) -> None:
     """把技能索引进系统提示，并装上 ``read_skill``。同名工具就地替换。
 
-    ``only`` 有值时，索引和读取都只包含这一个技能。
+    ``only`` 有值时，索引和读取都只包含选中的技能。
     """
     skills = Skills(directory, only=only)
     loop.install_prompt(skills.index_prompt())

@@ -73,6 +73,7 @@ export function errorLabel(code: string): string {
   if (code === "rename_failed") return "重命名没有完成"
   if (code === "config_save_failed") return "工作目录配置保存失败，请检查 config.toml 的权限或格式"
   if (code === "unknown_skill") return "没有这个技能"
+  if (code === "skills_save_failed") return "技能选择保存失败，请检查会话目录权限后重试"
   return code
 }
 

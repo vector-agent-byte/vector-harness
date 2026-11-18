@@ -52,7 +52,9 @@ from vector_harness.web_sessions import (
     session_mode,
     session_run,
     session_skill,
+    session_skills,
     set_session_skill,
+    set_session_skills,
     set_session_mode,
 )
 
@@ -221,6 +223,7 @@ _ROUTES: list[tuple[str, tuple[str | None, ...], object]] = [
     ("POST", ("api", "sessions", None, "messages"), "messages"),
     ("POST", ("api", "sessions", None, "stop"), "stop"),
     ("POST", ("api", "sessions", None, "skill"), "skill"),
+    ("POST", ("api", "sessions", None, "skills"), "session_skills"),
     ("POST", ("api", "sessions", None, "mode"), "mode"),
 ]
 
@@ -247,6 +250,7 @@ def _handlers() -> dict[str, object]:
             "messages": _handle_messages,
             "stop": _handle_stop,
             "skill": _handle_skill,
+            "session_skills": _handle_session_skills,
             "mode": _handle_mode,
         }
     return _HANDLERS
@@ -346,6 +350,7 @@ def _handle_read_session(app: WebServer, handler, variables: list[str]) -> None:
             "id": session_id,
             "messages": messages,
             "skill": session_skill(workspace, session_id),
+            "skills": session_skills(workspace, session_id),
             "mode": session_mode(workspace, session_id) or "react",
             "started_at": started_at,
             "duration_ms": duration_ms,
@@ -400,12 +405,56 @@ def _handle_skill(app: WebServer, handler, variables: list[str]) -> None:
     if chosen and chosen not in {item["name"] for item in _skill_catalog(app)}:
         send_error(handler, 400, "unknown_skill")
         return
-    try:
-        set_session_skill(app.settings.workspace, session_id, chosen or None)
-    except FileNotFoundError:
-        send_error(handler, 404, "not_found")
+    if not app.runs.acquire():
+        send_error(handler, 409, "busy")
         return
-    send_json(handler, 200, {"id": session_id, "skill": chosen or None})
+    try:
+        try:
+            set_session_skill(app.settings.workspace, session_id, chosen or None)
+        except FileNotFoundError:
+            send_error(handler, 404, "not_found")
+            return
+        except OSError:
+            send_error(handler, 500, "skills_save_failed")
+            return
+        send_json(handler, 200, {"id": session_id, "skill": chosen or None})
+    finally:
+        app.runs.release()
+
+
+def _handle_session_skills(app: WebServer, handler, variables: list[str]) -> None:
+    session_id = variables[0]
+    if not is_session_id(session_id):
+        send_error(handler, 400, "bad_session")
+        return
+    payload = object_body(read_body(handler))
+    if payload is None or "names" not in payload:
+        send_error(handler, 400, "bad_request")
+        return
+    names = payload["names"]
+    if names is not None:
+        if not isinstance(names, list) or not all(isinstance(name, str) and name.strip() for name in names):
+            send_error(handler, 400, "bad_request")
+            return
+        if set(names) - {item["name"] for item in _skill_catalog(app)}:
+            send_error(handler, 400, "unknown_skill")
+            return
+        names = list(dict.fromkeys(names))
+    if not app.runs.acquire():
+        send_error(handler, 409, "busy")
+        return
+    try:
+        try:
+            set_session_skills(app.settings.workspace, session_id, names)
+        except FileNotFoundError:
+            send_error(handler, 404, "not_found")
+            return
+        except OSError:
+            send_error(handler, 500, "skills_save_failed")
+            return
+        send_json(handler, 200, {"id": session_id, "skills": names})
+    finally:
+        app.runs.release()
 
 
 def _handle_mode(app: WebServer, handler, variables: list[str]) -> None:

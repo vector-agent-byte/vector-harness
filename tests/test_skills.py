@@ -57,6 +57,20 @@ def test_unknown_skill_returns_error(tmp_path: Path) -> None:
     assert result == "Error: Unknown skill: missing"
 
 
+def test_multiple_selected_skills_filter_both_index_and_read_tool(tmp_path: Path) -> None:
+    root = _write_skill_tree(tmp_path)
+    (root / "gamma.md").write_text("---\nname: gamma\ndescription: third skill\n---\nGAMMA_BODY\n", encoding="utf-8")
+    skills = Skills(root, only=["alpha", "beta"])
+    assert "alpha" in skills.index_prompt()
+    assert "beta" in skills.index_prompt()
+    assert "gamma" not in skills.index_prompt()
+    assert "ALPHA_BODY" in run(skills.read_tool().execute({"name": "alpha"}))
+    assert "BETA_BODY" in run(skills.read_tool().execute({"name": "beta"}))
+    assert run(skills.read_tool().execute({"name": "gamma"})) == "Error: Unknown skill: gamma"
+    assert len(skills.catalog()) == 3
+    assert Skills(root, only=[]).index_prompt() == ""
+
+
 def test_missing_directory_index_is_empty(tmp_path: Path) -> None:
     skills = Skills(tmp_path / "does-not-exist")
     assert skills.index_prompt() == ""

@@ -49,7 +49,8 @@ def list_sessions(workspace: Path) -> list[dict]:
                 "id": session_id,
                 "title": _title(path, session_id),
                 "updated_at": path.stat().st_mtime,
-                "skill": _read_skill_file(directory / f"{session_id}.skill"),
+                "skill": session_skill(workspace, session_id),
+                "skills": session_skills(workspace, session_id),
                 "mode": session_mode(workspace, session_id) or "react",
                 "started_at": started_at,
                 "duration_ms": duration_ms,
@@ -66,28 +67,60 @@ def create_session(workspace: Path) -> str:
     session_id = uuid4().hex
     path = directory / f"{session_id}.jsonl"
     path.write_text("", encoding="utf-8")
+    set_session_skills(workspace, session_id, None)
     return session_id
 
 
 def session_skill(workspace: Path, session_id: str) -> str | None:
-    """这个会话单独选中的技能。没选过、或文件是空的，返回 None。"""
-    if not is_session_id(session_id):
-        raise ValueError(session_id)
-    return _read_skill_file(_sessions_dir(workspace) / f"{session_id}.skill")
+    """兼容单技能接口；只有明确选择一个技能时返回名字。"""
+    names = session_skills(workspace, session_id)
+    return names[0] if names is not None and len(names) == 1 else None
 
 
 def set_session_skill(workspace: Path, session_id: str, name: str | None) -> None:
-    """记下这个会话的技能。``name`` 为空就清掉。会话文件不存在时抛出 FileNotFoundError。"""
-    if not is_session_id(session_id):
-        raise ValueError(session_id)
-    directory = _sessions_dir(workspace)
-    if not (directory / f"{session_id}.jsonl").is_file():
+    """兼容单技能接口，空名字表示不使用技能。"""
+    set_session_skills(workspace, session_id, [name] if name else [])
+
+
+def session_skills(workspace: Path, session_id: str) -> list[str] | None:
+    """None 表示全选，空列表表示不使用；兼容旧的单技能文件。"""
+    path = session_path(workspace, session_id).with_suffix(".skills.json")
+    if not path.is_file():
+        legacy = path.with_name(f"{session_id}.skill")
+        if not legacy.is_file():
+            return None
+        name = _read_skill_file(legacy)
+        return [name] if name else []
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, UnicodeError):
+        return []
+    if not isinstance(data, dict) or "names" not in data:
+        return []
+    names = data["names"]
+    if names is None:
+        return None
+    if not isinstance(names, list) or not all(isinstance(name, str) and name.strip() for name in names):
+        return []
+    return list(dict.fromkeys(names))
+
+
+def set_session_skills(workspace: Path, session_id: str, names: list[str] | None) -> None:
+    path = session_path(workspace, session_id)
+    if not path.is_file():
         raise FileNotFoundError(session_id)
-    path = directory / f"{session_id}.skill"
-    if not name:
-        path.unlink(missing_ok=True)
-        return
-    path.write_text(name + "\n", encoding="utf-8")
+    if names is not None:
+        if not isinstance(names, list) or not all(isinstance(name, str) and name.strip() for name in names):
+            raise ValueError("skills must be a list of non-empty names or null")
+        names = list(dict.fromkeys(names))
+    target = path.with_suffix(".skills.json")
+    temporary = path.with_suffix(".skills.json.tmp")
+    try:
+        temporary.write_text(json.dumps({"names": names}, ensure_ascii=False), encoding="utf-8")
+        temporary.replace(target)
+    finally:
+        temporary.unlink(missing_ok=True)
+    path.with_suffix(".skill").unlink(missing_ok=True)
 
 
 def session_mode(workspace: Path, session_id: str) -> str | None:
@@ -146,6 +179,7 @@ def delete_session(workspace: Path, session_id: str) -> None:
         raise FileNotFoundError(session_id)
     path.unlink()
     (directory / f"{session_id}.skill").unlink(missing_ok=True)
+    (directory / f"{session_id}.skills.json").unlink(missing_ok=True)
     (directory / f"{session_id}.run.json").unlink(missing_ok=True)
     (directory / f"{session_id}.children.jsonl").unlink(missing_ok=True)
     (directory / f"{session_id}.mode").unlink(missing_ok=True)

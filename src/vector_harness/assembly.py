@@ -43,6 +43,7 @@ def apply_patterns(
     provider: Model,
     skills_dir: Path | None = None,
     skill_name: str | None = None,
+    skill_names: list[str] | None = None,
     memory_path: Path | None = None,
     compact: bool = False,
     plan: bool = False,
@@ -56,7 +57,7 @@ def apply_patterns(
     if skills_dir is not None:
         from vector_harness.patterns.skills import attach_skills
 
-        attach_skills(loop, skills_dir, only=skill_name)
+        attach_skills(loop, skills_dir, only=skill_names if skill_names is not None else skill_name)
     if memory_path is not None:
         from vector_harness.patterns.memory import attach_memory
 
@@ -79,6 +80,7 @@ def attach(
     *,
     skills_dir: Path | None = None,
     skill_name: str | None = None,
+    skill_names: list[str] | None = None,
     memory_path: Path | None = None,
     compact: bool = False,
     plan: bool = False,
@@ -95,6 +97,7 @@ def attach(
         provider=agent.llm,
         skills_dir=skills_dir,
         skill_name=skill_name,
+        skill_names=skill_names,
         memory_path=memory_path,
         compact=compact,
         plan=plan,
