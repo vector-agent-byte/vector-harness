@@ -176,5 +176,5 @@ class Loop:
         if result is None:
             result = _result(self.session, RunStatus.MAX_STEPS, "", self.max_steps)
 
-        self._emit(ProviderEvent(kind=EventKind.RUN_END))
+        self._emit(ProviderEvent(kind=EventKind.RUN_END, status=result.status))
         return result

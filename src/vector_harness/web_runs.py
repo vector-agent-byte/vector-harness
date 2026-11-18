@@ -103,6 +103,7 @@ class RunManager:
                 fragment.append(event.text)
             self.emit(event)
 
+        status = "error"
         try:
             agent = self._build(session=Session(session_path), plan=plan, reflect=reflect, subagents=subagents)
             for tool in agent.loop.tools:
@@ -120,6 +121,7 @@ class RunManager:
                 _logger.info("run_result status=%s", status)
             return status, content
         finally:
+            child_trace.finish(status)
             self.running_id = None
             finish_run(workspace, session_id)
             _logger.info("run finish session=%s", session_id)

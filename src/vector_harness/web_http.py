@@ -132,6 +132,8 @@ def event_payload(event: ProviderEvent) -> dict[str, object]:
         "tool_call_id": event.tool_call_id,
         "arguments": event.arguments,
         "origin": event.origin,
+        "parent_tool_call_id": event.parent_tool_call_id,
+        "status": event.status,
     }
 
 

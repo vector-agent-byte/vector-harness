@@ -1,4 +1,5 @@
 import { normalizeMode } from "./modes.ts"
+import { childStatus } from "./children.ts"
 import { sessionSkillSelection } from "./skills.ts"
 import type {
   ChatMessage,
@@ -64,6 +65,7 @@ export function normalizeChild(value: unknown): LiveSection | undefined {
   if (!value || typeof value !== "object") return undefined
   const record = value as Record<string, unknown>
   return {
+    ...(childStatus(record.status) ? { status: childStatus(record.status) } : {}),
     thinking: typeof record.thinking === "string" ? record.thinking : "",
     text: typeof record.text === "string" ? record.text : "",
     tools: Array.isArray(record.tools) ? record.tools.flatMap((tool: unknown) => {

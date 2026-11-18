@@ -21,12 +21,13 @@ def test_child_trace_is_readable_during_execution_and_kept_out_of_model_context(
     trace.record(ProviderEvent(kind="tool_call_end", name="shell", arguments={"command": "pwd"}, origin="child"))
     trace.record(ProviderEvent(kind="tool_result", text="ignored", origin="child"))
     trace.record(ProviderEvent(kind="text_delta", text="partial", origin="child"))
-    expected = {"thinking": "child thought", "text": "partial", "tools": [{"name": "shell", "args": {"command": "pwd"}}]}
+    expected = {"thinking": "child thought", "text": "partial", "tools": [{"name": "shell", "args": {"command": "pwd"}}], "status": "running"}
     assert read_messages(tmp_path, session_id)[0]["tool_calls"][0]["child"] == expected
     assert "child thought" not in path.read_text(encoding="utf-8")
     assert len(Session(path).load()) == 1
     assert len(list_sessions(tmp_path)) == 1
     trace.record(ProviderEvent(kind="tool_result", tool_call_id="delegate-1"))
+    expected["status"] = "complete"
     trace.record(ProviderEvent(kind="text_delta", text="not associated", origin="child"))
     assert read_children(path) == {"delegate-1": expected}
     delete_session(tmp_path, session_id)
@@ -43,4 +44,24 @@ def test_child_trace_ignores_incomplete_or_invalid_records(tmp_path: Path):
         for value in [None, [], {"call_id": []}, {"call_id": "call", "kind": []}, {"call_id": "call", "kind": "text_delta", "text": 5}]:
             stream.write(json.dumps(value) + "\n")
         stream.write('{"call_id": "call"')
-    assert read_children(path) == {"call": {"thinking": "", "text": "kept", "tools": []}}
+    assert read_children(path) == {"call": {"thinking": "", "text": "kept", "tools": [], "status": "running"}}
+
+
+def test_parallel_child_trace_routes_interleaved_events_and_finishes_queue(tmp_path: Path):
+    path = tmp_path / "session.jsonl"
+    trace = ChildTrace(path)
+    for call_id in ["first", "second", "queued"]:
+        trace.record(ProviderEvent(kind="tool_call_end", name="delegate", tool_call_id=call_id))
+    for call_id in ["first", "second"]:
+        trace.record(ProviderEvent(kind="tool_execution_start", name="delegate", tool_call_id=call_id))
+    trace.record(ProviderEvent(kind="text_delta", origin="child", text="ambiguous"))
+    trace.record(ProviderEvent(kind="text_delta", origin="child", parent_tool_call_id="second", text="B"))
+    trace.record(ProviderEvent(kind="thinking_delta", origin="child", parent_tool_call_id="first", text="thought A"))
+    trace.record(ProviderEvent(kind="run_end", origin="child", parent_tool_call_id="second", status="max_steps"))
+    trace.record(ProviderEvent(kind="tool_result", tool_call_id="second"))
+    trace.record(ProviderEvent(kind="text_delta", origin="child", parent_tool_call_id="first", text="A"))
+    trace.finish("stopped")
+    children = read_children(path)
+    assert children["first"] == {"thinking": "thought A", "text": "A", "tools": [], "status": "stopped"}
+    assert children["second"] == {"thinking": "", "text": "B", "tools": [], "status": "max_steps"}
+    assert children["queued"]["status"] == "stopped"

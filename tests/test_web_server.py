@@ -103,7 +103,7 @@ def test_child_history_survives_completion_multiple_turns_and_server_restart(tmp
                 assert '"status": "complete"' in response.text
             messages = client.get(f"{base}/api/sessions/{session_id}").json()["messages"]
         calls = {call["id"]: call for message in messages for call in message.get("tool_calls") or []}
-        assert "child" not in calls["rejected"]
+        assert calls["rejected"]["child"]["status"] == "error"
         for name in ["first", "second", "third"]:
             assert calls[name]["child"]["thinking"] == f"{name} thought"
             assert calls[name]["child"]["text"] == f"{name} result"
@@ -153,12 +153,75 @@ def test_refresh_and_stop_preserve_partial_child_history(tmp_path: Path):
             base = f"http://127.0.0.1:{server.port}"
             during = client.get(f"{base}/api/sessions/{session_id}").json()["messages"]
             child = during[-1]["tool_calls"][0]["child"]
-            assert child == {"thinking": "child is thinking", "text": "partial child reply", "tools": []}
+            assert child == {"thinking": "child is thinking", "text": "partial child reply", "tools": [], "status": "running"}
             assert client.post(f"{base}/api/sessions/{session_id}/stop").json() == {"stopped": True}
             worker.join(5)
             assert not worker.is_alive()
             assert '"status": "stopped"' in holder["response"].text
             after = client.get(f"{base}/api/sessions/{session_id}").json()["messages"]
+            child["status"] = "stopped"
+            assert after == during
+    finally:
+        if worker.is_alive():
+            server.request_stop(session_id)
+            worker.join(5)
+        server.shutdown()
+
+
+def test_parallel_children_stream_and_reload_independently_then_stop_together(tmp_path: Path):
+    session_id = create_session(tmp_path)
+    ready = threading.Event()
+    started = []
+    cancelled = []
+
+    class ParallelChildren:
+        async def stream(self, *, system, messages, tools):
+            if any(tool.name == "delegate" for tool in tools):
+                for index in range(5):
+                    yield ProviderEvent(kind="tool_call_end", name="delegate", tool_call_id=f"child-{index}", arguments={"task": f"task-{index}"})
+                return
+            task = messages[0].content
+            started.append(task)
+            yield ProviderEvent(kind="thinking_delta", text=f"thinking {task}")
+            yield ProviderEvent(kind="text_delta", text=f"partial {task}")
+            if len(started) == 4:
+                ready.set()
+            try:
+                await asyncio.Event().wait()
+            finally:
+                cancelled.append(task)
+
+    server = WebServer(WebSettings(workspace=tmp_path), ParallelChildren())
+    server.start()
+    base = f"http://127.0.0.1:{server.port}"
+    holder = {}
+
+    def post():
+        with httpx.Client(trust_env=False, timeout=10) as client:
+            holder["response"] = client.post(f"{base}/api/sessions/{session_id}/messages", json={"text": "parallel tasks", "mode": "subagents"})
+
+    worker = threading.Thread(target=post)
+    worker.start()
+    try:
+        assert ready.wait(5)
+        with httpx.Client(trust_env=False, timeout=5) as client:
+            during = client.get(f"{base}/api/sessions/{session_id}").json()["messages"]
+            calls = during[-1]["tool_calls"]
+            assert [call["child"]["status"] for call in calls] == ["running"] * 4 + ["queued"]
+            for index, call in enumerate(calls[:4]):
+                assert call["child"]["text"] == f"partial task-{index}"
+                assert call["child"]["thinking"] == f"thinking task-{index}"
+            assert client.post(f"{base}/api/sessions/{session_id}/stop").json() == {"stopped": True}
+            worker.join(5)
+            assert not worker.is_alive()
+            assert len(cancelled) == 4
+            assert len(started) == 4
+            assert '"status": "stopped"' in holder["response"].text
+            for index in range(4):
+                assert f'"parent_tool_call_id": "child-{index}"' in holder["response"].text
+            after = client.get(f"{base}/api/sessions/{session_id}").json()["messages"]
+            for call in calls:
+                call["child"]["status"] = "stopped"
             assert after == during
     finally:
         if worker.is_alive():

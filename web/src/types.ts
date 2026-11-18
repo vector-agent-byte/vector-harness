@@ -51,6 +51,8 @@ export type LiveTool = {
 
 export type LiveSection = {
   toolCallId?: string
+  task?: string
+  status?: "queued" | "running" | "complete" | "error" | "max_steps" | "stopped"
   thinking: string
   text: string
   tools: LiveTool[]
@@ -77,6 +79,7 @@ export type StreamEvent = {
   arguments?: unknown
   tool_call_id?: unknown
   origin?: unknown
+  parent_tool_call_id?: unknown
 }
 
 export type RunNote = {

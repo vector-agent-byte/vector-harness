@@ -1195,6 +1195,7 @@
 
 /* ── 子代理块 ── */
 .child-agent-block {
+  min-width: 0;
   margin: 10px 0 6px;
   border: 1px solid #e0e9ff;
   border-left: 3px solid #2563eb;
@@ -1204,6 +1205,7 @@
 }
 
 .child-agent-header {
+  cursor: pointer;
   display: flex;
   align-items: center;
   gap: 6px;
@@ -1215,6 +1217,53 @@
   background: #eef3ff;
   border-bottom: 1px solid #e0e9ff;
   user-select: none;
+}
+
+.child-agent-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 320px), 1fr));
+  gap: 10px;
+  align-items: start;
+}
+
+.child-agent-summary {
+  margin-top: 12px;
+  color: #52617a;
+  font-size: 12px;
+}
+
+.child-agent-id {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 400;
+}
+
+.child-agent-status {
+  flex: none;
+}
+
+.child-agent-status.complete {
+  color: #15803d;
+}
+
+.child-agent-status.error,
+.child-agent-status.max_steps {
+  color: #b91c1c;
+}
+
+.child-agent-status.queued,
+.child-agent-status.stopped {
+  color: #64748b;
+}
+
+.child-agent-task {
+  padding: 8px 12px;
+  font-size: 12px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }
 
 .child-agent-icon {

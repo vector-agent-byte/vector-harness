@@ -110,6 +110,7 @@ class ProviderEvent:
     ``thinking_delta`` 是模型的思考过程，只给观察方看，不写入会话。
     ``tool_call_start`` 的 ``arguments`` 保持 ``None``，参数要等
     ``tool_call_end`` 才完整。``origin`` 为空是当前循环，``child`` 是子代理。
+    子代理的 ``parent_tool_call_id`` 指向父循环的委托调用；``status`` 是运行结束状态。
     """
 
     kind: str
@@ -118,6 +119,8 @@ class ProviderEvent:
     tool_call_id: str = ""
     arguments: dict | None = None
     origin: str = ""
+    parent_tool_call_id: str = ""
+    status: str = ""
 
 
 # 可以 isinstance 检查。循环按这些字段调用，工具不必继承某个基类。

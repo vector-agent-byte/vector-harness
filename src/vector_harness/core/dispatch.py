@@ -6,7 +6,10 @@
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Callable
+from contextvars import ContextVar
+from itertools import groupby
 
 from vector_harness.core.session import Session
 from vector_harness.types import (
@@ -19,6 +22,8 @@ from vector_harness.types import (
     ToolCall,
     ToolHook,
 )
+
+current_tool_call_id: ContextVar[str] = ContextVar("current_tool_call_id", default="")
 
 
 def rejection_reason(call: ToolCall, known_names: set[str]) -> str | None:
@@ -47,50 +52,70 @@ class ToolDispatcher:
         self.on_event = on_event
 
     async def dispatch(self, tool_calls: list[ToolCall]) -> None:
-        """按调用顺序执行。同名工具以后登记的为准。"""
+        """仅并发执行显式允许并发的连续同名调用，普通工具作为顺序屏障。"""
         tool_map = {tool.name: tool for tool in self.tools}
         known = set(tool_map)
-        for call in tool_calls:
-            if self.on_event is not None:
-                self.on_event(ProviderEvent(
-                    kind=EventKind.TOOL_EXECUTION_START,
-                    name=call.name,
-                    tool_call_id=call.id,
-                ))
-            reason = rejection_reason(call, known)
-            if reason is not None:
-                self._append_error(call, reason)
+        for name, group in groupby(tool_calls, key=lambda call: call.name):
+            calls = list(group)
+            limit = getattr(tool_map.get(name), "max_concurrency", 1)
+            if not isinstance(limit, int) or limit < 2 or len(calls) == 1:
+                for call in calls:
+                    current = await self._prepare_call(call, known)
+                    if current is not None:
+                        await self._execute(current, tool_map[current.name])
                 continue
-            current, failure = await self._prepare(call)
-            if failure is not None:
-                self._append_error(current, failure)
-                continue
-            try:
-                output = await tool_map[current.name].execute(current.arguments)
-            except Exception as exc:
-                self._append_error(current, str(exc))
-                if self.on_event is not None:
-                    self.on_event(ProviderEvent(
-                        kind=EventKind.TOOL_RESULT,
-                        text=str(exc),
-                        tool_call_id=current.id,
-                        name="error",
-                    ))
-            else:
-                self.session.append(
-                    Message(
-                        role=Role.TOOL,
-                        content=output,
-                        tool_call_id=current.id,
-                        is_error=False,
-                    )
-                )
-                if self.on_event is not None:
-                    self.on_event(ProviderEvent(
-                        kind=EventKind.TOOL_RESULT,
-                        text=output,
-                        tool_call_id=current.id,
-                    ))
+            prepared = []
+            for call in calls:
+                current = await self._prepare_call(call, known)
+                if current is not None:
+                    prepared.append(current)
+            semaphore = asyncio.Semaphore(limit)
+
+            async def execute_limited(call: ToolCall) -> None:
+                async with semaphore:
+                    await self._execute(call, tool_map[call.name])
+
+            async with asyncio.TaskGroup() as tasks:
+                for call in prepared:
+                    tasks.create_task(execute_limited(call))
+
+    async def _prepare_call(self, call: ToolCall, known: set[str]) -> ToolCall | None:
+        reason = rejection_reason(call, known)
+        if reason is None:
+            call, reason = await self._prepare(call)
+        if reason is not None:
+            self._append_error(call, reason)
+            self._emit_result(call, reason, is_error=True)
+            return None
+        return call
+
+    async def _execute(self, call: ToolCall, tool: Tool) -> None:
+        if self.on_event is not None:
+            self.on_event(ProviderEvent(
+                kind=EventKind.TOOL_EXECUTION_START,
+                name=call.name,
+                tool_call_id=call.id,
+            ))
+        token = current_tool_call_id.set(call.id)
+        try:
+            output = await tool.execute(call.arguments)
+        except Exception as exc:
+            self._append_error(call, str(exc))
+            self._emit_result(call, str(exc), is_error=True)
+        else:
+            self.session.append(Message(role=Role.TOOL, content=output, tool_call_id=call.id))
+            self._emit_result(call, output)
+        finally:
+            current_tool_call_id.reset(token)
+
+    def _emit_result(self, call: ToolCall, text: str, *, is_error: bool = False) -> None:
+        if self.on_event is not None:
+            self.on_event(ProviderEvent(
+                kind=EventKind.TOOL_RESULT,
+                text=text,
+                tool_call_id=call.id,
+                name="error" if is_error else "",
+            ))
 
     def _append_error(self, call: ToolCall, content: str) -> None:
         self.session.append(

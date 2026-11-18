@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from "react"
 import type { CSSProperties, FormEvent, KeyboardEvent, MouseEvent, PointerEvent as ReactPointerEvent } from "react"
 import { MODES, normalizeMode } from "./modes.ts"
+import { updateChildren } from "./children.ts"
+import { ChildAgentCard } from "./ChildAgentCard.tsx"
 import type { ModeId } from "./modes.ts"
 import { sessionSkillSelection, skillSelectionLabel, toggleSkill } from "./skills.ts"
 import type { SkillSelection } from "./skills.ts"
@@ -41,7 +43,6 @@ import type {
   EntryKind,
   EntryMenu,
   FilePreview,
-  LiveSection,
   LiveTurn,
   NamedPath,
   RunNote,
@@ -110,7 +111,6 @@ export default function App() {
   const pendingToolsRef = useRef(0)
   const resetLiveRef = useRef(false)
   const lastOriginRef = useRef<string>("")
-  const activeDelegateRef = useRef<string | undefined>(undefined)
   const messagesRef = useRef<ChatMessage[]>([])
   const cacheRef = useRef(new Map<string, ChatMessage[]>())
   const bottomRef = useRef<HTMLDivElement | null>(null)
@@ -914,26 +914,10 @@ export default function App() {
     }
   }
 
-  function appendDelta(kind: "thinking" | "text" | "tool", piece: string, toolArgs?: Record<string, unknown> | null, origin?: string) {
-    const isChild = origin === "child"
-    const wasChild = lastOriginRef.current === "child"
-    const toolCallId = activeDelegateRef.current
-    lastOriginRef.current = origin ?? ""
+  function appendDelta(kind: "thinking" | "text" | "tool", piece: string, toolArgs?: Record<string, unknown> | null) {
+    lastOriginRef.current = ""
     setLive((prev) => {
       const base = prev ?? { thinking: "", text: "", tools: [], children: [] }
-      if (isChild) {
-        const needNew = base.children.length === 0 || (toolCallId
-          ? base.children[base.children.length - 1].toolCallId !== toolCallId
-          : !wasChild)
-        const kids = [...base.children]
-        if (needNew) kids.push({ thinking: "", text: "", tools: [], toolCallId })
-        const last: LiveSection = { ...kids[kids.length - 1] }
-        if (kind === "thinking") last.thinking += piece
-        else if (kind === "text") last.text += piece
-        else if (piece) last.tools = [...last.tools, { name: piece, args: toolArgs ?? null }]
-        kids[kids.length - 1] = last
-        return { ...base, children: kids }
-      }
       if (kind === "thinking") return { ...base, thinking: base.thinking + piece }
       if (kind === "text") return { ...base, text: base.text + piece }
       if (!piece) return base
@@ -994,7 +978,7 @@ export default function App() {
       messagesRef.current = next
       return next
     })
-    activeDelegateRef.current = undefined
+    lastOriginRef.current = ""
     setLive({ thinking: "", text: "", tools: [], children: [] })
     setStreamSessionId(sessionId)
 
@@ -1033,17 +1017,23 @@ export default function App() {
       const { completed, status } = await readEventStream(response, (event) => {
         const origin = typeof event.origin === "string" ? event.origin : undefined
         const isChild = origin === "child"
-        if (event.kind === "tool_execution_start" && !isChild) {
-          activeDelegateRef.current = event.name === "delegate" && typeof event.tool_call_id === "string"
-            ? event.tool_call_id : undefined
-        } else if (event.kind === "text_delta" && typeof event.text === "string") {
+        setLive(prev => {
+          const base = prev ?? { thinking: "", text: "", tools: [], children: [] }
+          const children = updateChildren(base.children, event)
+          return children === base.children ? prev : { ...base, children }
+        })
+        if (isChild) {
+          lastOriginRef.current = "child"
+          return
+        }
+        if (event.kind === "text_delta" && typeof event.text === "string") {
           if (resetLiveRef.current && !isChild) {
             resetLiveRef.current = false
             lastOriginRef.current = ""
             const t = event.text as string
             setLive(prev => ({ thinking: "", text: t, tools: [], children: prev?.children ?? [] }))
           } else {
-            appendDelta("text", event.text, undefined, origin)
+            appendDelta("text", event.text)
           }
         } else if (event.kind === "thinking_delta" && typeof event.text === "string") {
           if (resetLiveRef.current && !isChild) {
@@ -1052,7 +1042,7 @@ export default function App() {
             const t = event.text as string
             setLive(prev => ({ thinking: t, text: "", tools: [], children: prev?.children ?? [] }))
           } else {
-            appendDelta("thinking", event.text, undefined, origin)
+            appendDelta("thinking", event.text)
           }
         } else if (event.kind === "tool_call_end" && typeof event.name === "string") {
           if (!isChild) pendingToolsRef.current += 1
@@ -1060,7 +1050,7 @@ export default function App() {
             event.arguments && typeof event.arguments === "object"
               ? (event.arguments as Record<string, unknown>)
               : null
-          appendDelta("tool", event.name, args, origin)
+          appendDelta("tool", event.name, args)
         } else if (event.kind === "tool_result" && !isChild) {
           pendingToolsRef.current = Math.max(0, pendingToolsRef.current - 1)
           if (pendingToolsRef.current === 0) {
@@ -1285,31 +1275,13 @@ export default function App() {
                         ? undefined : call.child
                       if (childSection) {
                         children.push(
-                          <div key={`child-saved-${call.id}`} className="child-agent-block">
-                            <div className="child-agent-header">
-                              <svg className="child-agent-icon" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                                <circle cx="7" cy="7" r="5.5"/>
-                                <path d="M7 4.5v5M4.5 7h5"/>
-                              </svg>
-                              子代理
-                            </div>
-                            {childSection.thinking ? (
-                              <ThinkingBlock text={childSection.thinking} streaming={false} />
-                            ) : null}
-                            {childSection.text ? <Markdown text={childSection.text} /> : null}
-                            {childSection.tools.map((tool, ti) => {
-                              if (!tool.name) return null
-                              const summary = toolSummary(tool.name, tool.args)
-                              return (
-                                <div key={`${tool.name}-${ti}`} className="tool-name">
-                                  <span className="tool-name-label">{tool.name}</span>
-                                  {summary ? (
-                                    <span className="tool-name-arg">{summary.length > 80 ? summary.slice(0, 80) + "…" : summary}</span>
-                                  ) : null}
-                                </div>
-                              )
-                            })}
-                          </div>
+                          <ChildAgentCard
+                            key={`child-saved-${call.id}`}
+                            child={childSection}
+                            callId={call.id}
+                            task={typeof call.args?.task === "string" ? call.args.task : undefined}
+                            active={runningId === openId}
+                          />
                         )
                       }
                     }
@@ -1398,38 +1370,22 @@ export default function App() {
                             </div>
                           )
                         })}
-                        {live.children.map((child, ci) => {
-                          const isLast = ci === live.children.length - 1
-                          const childStreaming = readingStream && isLast && lastOriginRef.current === "child"
-                          return (
-                            <div key={ci} className="child-agent-block">
-                              <div className="child-agent-header">
-                                <svg className="child-agent-icon" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                                  <circle cx="7" cy="7" r="5.5"/>
-                                  <path d="M7 4.5v5M4.5 7h5"/>
-                                </svg>
-                                子代理
-                                {childStreaming ? <span className="child-agent-pulse" /> : null}
-                              </div>
-                              {child.thinking ? (
-                                <ThinkingBlock text={child.thinking} streaming={childStreaming} />
-                              ) : null}
-                              {child.text ? <Markdown text={child.text} /> : null}
-                              {child.tools.map((tool, ti) => {
-                                if (!tool.name) return null
-                                const summary = toolSummary(tool.name, tool.args)
-                                return (
-                                  <div key={`${tool.name}-${ti}`} className="tool-name">
-                                    <span className="tool-name-label">{tool.name}</span>
-                                    {summary ? (
-                                      <span className="tool-name-arg">{summary.length > 80 ? summary.slice(0, 80) + "…" : summary}</span>
-                                    ) : null}
-                                  </div>
-                                )
-                              })}
-                            </div>
-                          )
-                        })}
+                        {live.children.length > 0 ? (
+                          <div className="child-agent-summary" role="status">
+                            子代理 {live.children.length} 个 · 运行中 {live.children.filter(child => child.status === "running").length} · 排队中 {live.children.filter(child => child.status === "queued").length}
+                          </div>
+                        ) : null}
+                        <div className="child-agent-grid">
+                          {live.children.map(child => (
+                            <ChildAgentCard
+                              key={child.toolCallId}
+                              child={child}
+                              callId={child.toolCallId ?? ""}
+                              task={child.task}
+                              active={runningId === openId || readingStream}
+                            />
+                          ))}
+                        </div>
                       </div>
                       {liveTiming ? <div className="message-time">{liveTiming}</div> : null}
                     </div>
