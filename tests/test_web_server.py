@@ -64,6 +64,7 @@ def test_lists_creates_and_reads_a_session(tmp_path: Path):
                 "id": session_id,
                 "messages": [],
                 "skill": None,
+                "mode": "react",
                 "started_at": None,
                 "duration_ms": None,
             }
@@ -162,6 +163,68 @@ def test_refresh_and_stop_preserve_partial_child_history(tmp_path: Path):
         if worker.is_alive():
             server.request_stop(session_id)
             worker.join(5)
+        server.shutdown()
+
+
+def test_modes_belong_to_sessions_and_survive_restart(tmp_path: Path):
+    provider = ScriptedProvider([ScriptedTurn(content="child mode answer"), ScriptedTurn(content="react answer")])
+    server = WebServer(WebSettings(workspace=tmp_path), provider)
+    server.start()
+    try:
+        with httpx.Client(trust_env=False, timeout=10) as client:
+            base = f"http://127.0.0.1:{server.port}"
+            first = client.post(f"{base}/api/sessions").json()["id"]
+            second = client.post(f"{base}/api/sessions").json()["id"]
+            assert client.get(f"{base}/api/sessions/{first}").json()["mode"] == "react"
+            for mode in ["react", "plan", "reflect", "subagents"]:
+                response = client.post(f"{base}/api/sessions/{first}/mode", json={"mode": mode})
+                assert response.status_code == 200
+                assert response.json() == {"id": first, "mode": mode}
+                assert client.get(f"{base}/api/sessions/{first}").json()["mode"] == mode
+                assert client.get(f"{base}/api/sessions/{second}").json()["mode"] == "react"
+            assert client.post(f"{base}/api/sessions/{second}/mode", json={"mode": "reflect"}).status_code == 200
+            listed = client.get(f"{base}/api/sessions").json()["sessions"]
+            assert {item["id"]: item["mode"] for item in listed} == {first: "subagents", second: "reflect"}
+            response = client.post(f"{base}/api/sessions/{first}/messages", json={"text": "use saved mode"})
+            assert response.status_code == 200
+            assert "delegate" in provider.calls[0]["tools"]
+            response = client.post(f"{base}/api/sessions/{first}/messages", json={"text": "override", "mode": "react"})
+            assert response.status_code == 200
+            assert "delegate" not in provider.calls[1]["tools"]
+            assert client.get(f"{base}/api/sessions/{first}").json()["mode"] == "react"
+    finally:
+        server.shutdown()
+    restarted = WebServer(WebSettings(workspace=tmp_path), provider=object())
+    restarted.start()
+    try:
+        with httpx.Client(trust_env=False) as client:
+            base = f"http://127.0.0.1:{restarted.port}"
+            assert client.get(f"{base}/api/sessions/{first}").json()["mode"] == "react"
+            assert client.get(f"{base}/api/sessions/{second}").json()["mode"] == "reflect"
+            assert client.delete(f"{base}/api/sessions/{second}").status_code == 200
+            assert not (tmp_path / ".vector" / "sessions" / f"{second}.mode").exists()
+    finally:
+        restarted.shutdown()
+
+
+def test_mode_updates_reject_invalid_missing_and_busy_sessions(tmp_path: Path):
+    session_id = create_session(tmp_path)
+    server = WebServer(WebSettings(workspace=tmp_path), provider=object())
+    server.start()
+    try:
+        with httpx.Client(trust_env=False) as client:
+            base = f"http://127.0.0.1:{server.port}"
+            for payload in [{}, {"mode": None}, {"mode": []}, {"mode": "unknown"}]:
+                assert client.post(f"{base}/api/sessions/{session_id}/mode", json=payload).status_code == 400
+            assert client.post(f"{base}/api/sessions/not-an-id/mode", json={"mode": "plan"}).status_code == 400
+            assert client.post(f"{base}/api/sessions/{'f' * 32}/mode", json={"mode": "plan"}).status_code == 404
+            assert server.runs.acquire()
+            try:
+                assert client.post(f"{base}/api/sessions/{session_id}/mode", json={"mode": "subagents"}).status_code == 409
+            finally:
+                server.runs.release()
+            assert client.get(f"{base}/api/sessions/{session_id}").json()["mode"] == "react"
+    finally:
         server.shutdown()
 
 

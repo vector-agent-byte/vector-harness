@@ -1,3 +1,4 @@
+import { normalizeMode } from "./modes.ts"
 import type {
   ChatMessage,
   DirEntry,
@@ -25,6 +26,7 @@ export function parseSessionList(value: unknown): SessionList | null {
       title: row.title,
       updated_at: typeof row.updated_at === "number" ? row.updated_at : 0,
       skill: typeof row.skill === "string" && row.skill !== "" ? row.skill : null,
+      mode: normalizeMode(row.mode),
       started_at: typeof row.started_at === "number" ? row.started_at : null,
       duration_ms: typeof row.duration_ms === "number" ? row.duration_ms : null,
     })

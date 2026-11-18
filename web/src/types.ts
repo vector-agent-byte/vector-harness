@@ -1,8 +1,11 @@
+import type { ModeId } from "./modes.ts"
+
 export type SessionItem = {
   id: string
   title: string
   updated_at: number
   skill: string | null
+  mode: ModeId
   started_at: number | null
   duration_ms: number | null
 }

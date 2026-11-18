@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react"
 import type { CSSProperties, FormEvent, KeyboardEvent, MouseEvent, PointerEvent as ReactPointerEvent } from "react"
+import { MODES, normalizeMode } from "./modes.ts"
+import type { ModeId } from "./modes.ts"
 import { entryMenu as entryMenuLabels, findListableDir, highlightCode, listingGenerationIsCurrent, refreshMayReplaceDraft, REFRESH_MS, shouldShowPicker, viewedPathAfter } from "./dirPath.ts"
 import {
   normalizeMessages,
@@ -52,16 +54,6 @@ import "./App.css"
 const POLL_MS = 1000
 const OPEN_SESSION_KEY = "vector-open-session"
 
-const MODES = [
-  { id: "react",     label: "ReAct" },
-  { id: "plan",      label: "PlanAndSolve" },
-  { id: "reflect",   label: "Reflection" },
-  { id: "subagents", label: "SubAgents" },
-] as const
-
-type ModeId = (typeof MODES)[number]["id"]
-
-
 export default function App() {
   const [sessions, setSessions] = useState<SessionItem[]>([])
   const [runningId, setRunningId] = useState<string | null>(null)
@@ -74,7 +66,7 @@ export default function App() {
   const [runNote, setRunNote] = useState<RunNote | null>(null)
   const [errorText, setErrorText] = useState<string | null>(null)
   const [listReady, setListReady] = useState(false)
-  const [mode, setMode] = useState<ModeId>("react")
+  const [savingMode, setSavingMode] = useState(false)
   const [modelName, setModelName] = useState("")
   const [skills, setSkills] = useState<SkillItem[]>([])
   const [workdir, setWorkdir] = useState("")
@@ -103,6 +95,8 @@ export default function App() {
   const openIdRef = useRef<string | null>(null)
   const readingStreamRef = useRef(false)
   const sendingRef = useRef(false)
+  const savingModeRef = useRef(false)
+  const modeRevisionRef = useRef(0)
   const streamSessionRef = useRef<string | null>(null)
   const creatingRef = useRef(false)
   const pendingToolsRef = useRef(0)
@@ -135,6 +129,7 @@ export default function App() {
   workdirRef.current = workdir
 
   const refreshList = useCallback(async (): Promise<SessionList | null> => {
+    const modeRevision = modeRevisionRef.current
     try {
       const response = await fetch("/api/sessions", { cache: "no-store" })
       if (!response.ok) {
@@ -145,7 +140,7 @@ export default function App() {
       }
       const data = parseSessionList(await response.json())
       if (!data) return null
-      setSessions(data.sessions)
+      if (modeRevision === modeRevisionRef.current && !savingModeRef.current) setSessions(data.sessions)
       setRunningId(data.running_id)
       setModelName(data.model)
       return data
@@ -157,6 +152,7 @@ export default function App() {
   }, [])
 
   const fetchSessionMessages = useCallback(async (id: string): Promise<ChatMessage[] | null> => {
+    const modeRevision = modeRevisionRef.current
     const response = await fetch(`/api/sessions/${encodeURIComponent(id)}`, {
       cache: "no-store",
     })
@@ -168,7 +164,10 @@ export default function App() {
       }
       return null
     }
-    const body = (await response.json()) as { messages?: unknown }
+    const body = (await response.json()) as { messages?: unknown; mode?: unknown }
+    if (modeRevision === modeRevisionRef.current && !savingModeRef.current) {
+      setSessions(current => current.map(item => item.id === id ? { ...item, mode: normalizeMode(body.mode) } : item))
+    }
     return normalizeMessages(body.messages)
   }, [refreshList])
 
@@ -578,6 +577,34 @@ export default function App() {
     setOpenId(id)
   }
 
+  async function chooseMode(mode: ModeId) {
+    const sessionId = openIdRef.current
+    if (!sessionId || runningId !== null || readingStreamRef.current || sendingRef.current || savingModeRef.current) return
+    savingModeRef.current = true
+    modeRevisionRef.current += 1
+    setSavingMode(true)
+    try {
+      const response = await fetch(`/api/sessions/${encodeURIComponent(sessionId)}/mode`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ mode }),
+      })
+      if (!response.ok) {
+        setErrorText(await readError(response))
+        return
+      }
+      const body = (await response.json()) as { mode?: unknown }
+      setSessions(current => current.map(item => item.id === sessionId ? { ...item, mode: normalizeMode(body.mode) } : item))
+      setErrorText(null)
+    } catch {
+      setErrorText("bad_request")
+    } finally {
+      modeRevisionRef.current += 1
+      savingModeRef.current = false
+      setSavingMode(false)
+    }
+  }
+
   async function chooseSkill(name: string | null) {
     const sessionId = openIdRef.current
     if (!sessionId || runningId !== null || readingStreamRef.current) return
@@ -842,7 +869,7 @@ export default function App() {
       setSessions((current) =>
         current.some((item) => item.id === id)
           ? current
-          : [{ id, title: id, updated_at: Date.now(), skill: null, started_at: null, duration_ms: null }, ...current],
+          : [{ id, title: id, updated_at: Date.now(), skill: null, mode: "react", started_at: null, duration_ms: null }, ...current],
       )
       setSkillOpen(false)
       await refreshList()
@@ -915,7 +942,7 @@ export default function App() {
   async function send() {
     const text = draft
     if (text.trim() === "") return
-    if (!openId || runningId !== null || readingStream || sendingRef.current) return
+    if (!openId || runningId !== null || readingStream || sendingRef.current || savingModeRef.current) return
     const sessionId = openId
     sendingRef.current = true
     readingStreamRef.current = true
@@ -943,7 +970,7 @@ export default function App() {
         response = await fetch(`/api/sessions/${encodeURIComponent(sessionId)}/messages`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ text, mode }),
+          body: JSON.stringify({ text }),
         })
       } catch {
         await rollbackSend(sessionId, text)
@@ -1069,11 +1096,12 @@ export default function App() {
 
   const openSession = sessions.find((session) => session.id === openId) ?? null
   const selectedSkill = openSession?.skill ?? null
+  const mode = openSession?.mode ?? "react"
   const propsSession = sessions.find((session) => session.id === propsId) ?? null
   const propsTiming = propsSession
     ? sessionProperties(propsSession, propsSession.id === runningId, now)
     : null
-  const inputLocked = runningId !== null || readingStream
+  const inputLocked = runningId !== null || readingStream || savingMode
   const showLive =
     live !== null &&
     streamSessionId !== null &&
@@ -1468,8 +1496,8 @@ export default function App() {
                       className={item.id === mode ? "mode is-selected" : "mode"}
                       role="radio"
                       aria-checked={item.id === mode}
-                      disabled={inputLocked}
-                      onClick={() => setMode(item.id)}
+                      disabled={inputLocked || !openId}
+                      onClick={() => void chooseMode(item.id)}
                     >
                       {item.label}
                     </button>

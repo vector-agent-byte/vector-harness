@@ -48,9 +48,11 @@ from vector_harness.web_sessions import (
     list_sessions,
     read_messages,
     session_path,
+    session_mode,
     session_run,
     session_skill,
     set_session_skill,
+    set_session_mode,
 )
 
 _logger = logging.getLogger("vector_harness.web")
@@ -214,6 +216,7 @@ _ROUTES: list[tuple[str, tuple[str | None, ...], object]] = [
     ("POST", ("api", "sessions", None, "messages"), "messages"),
     ("POST", ("api", "sessions", None, "stop"), "stop"),
     ("POST", ("api", "sessions", None, "skill"), "skill"),
+    ("POST", ("api", "sessions", None, "mode"), "mode"),
 ]
 
 _HANDLERS: dict[str, object] | None = None
@@ -239,6 +242,7 @@ def _handlers() -> dict[str, object]:
             "messages": _handle_messages,
             "stop": _handle_stop,
             "skill": _handle_skill,
+            "mode": _handle_mode,
         }
     return _HANDLERS
 
@@ -301,7 +305,9 @@ def _handle_workdir(app: WebServer, handler, _variables: list[str]) -> None:
 
 
 def _handle_create_session(app: WebServer, handler, _variables: list[str]) -> None:
-    send_json(handler, 201, {"id": create_session(app.settings.workspace)})
+    session_id = create_session(app.settings.workspace)
+    set_session_mode(app.settings.workspace, session_id, "react")
+    send_json(handler, 201, {"id": session_id})
 
 
 def _handle_list_sessions(app: WebServer, handler, _variables: list[str]) -> None:
@@ -335,6 +341,7 @@ def _handle_read_session(app: WebServer, handler, variables: list[str]) -> None:
             "id": session_id,
             "messages": messages,
             "skill": session_skill(workspace, session_id),
+            "mode": session_mode(workspace, session_id) or "react",
             "started_at": started_at,
             "duration_ms": duration_ms,
         },
@@ -396,6 +403,30 @@ def _handle_skill(app: WebServer, handler, variables: list[str]) -> None:
     send_json(handler, 200, {"id": session_id, "skill": chosen or None})
 
 
+def _handle_mode(app: WebServer, handler, variables: list[str]) -> None:
+    session_id = variables[0]
+    if not is_session_id(session_id):
+        send_error(handler, 400, "bad_session")
+        return
+    payload = object_body(read_body(handler))
+    mode = payload.get("mode") if payload is not None else None
+    if not isinstance(mode, str) or mode not in _MODES:
+        send_error(handler, 400, "bad_request")
+        return
+    if not app.runs.acquire():
+        send_error(handler, 409, "busy")
+        return
+    try:
+        try:
+            set_session_mode(app.settings.workspace, session_id, mode)
+        except FileNotFoundError:
+            send_error(handler, 404, "not_found")
+            return
+        send_json(handler, 200, {"id": session_id, "mode": mode})
+    finally:
+        app.runs.release()
+
+
 def _handle_messages(app: WebServer, handler, variables: list[str]) -> None:
     """发送一句。检查失败时返回 JSON，成功时把这一轮流式写回去。"""
     session_id = variables[0]
@@ -415,17 +446,19 @@ def _handle_messages(app: WebServer, handler, variables: list[str]) -> None:
     if text.strip() == "":
         send_error(handler, 400, "empty")
         return
-    if mode is None:
-        plan, reflect, subagents = app.settings.plan, app.settings.reflect, app.settings.subagents
-    else:
-        plan, reflect, subagents = _MODES[mode]
     # 锁在启动运行之前就占住，一直留到 run 返回。第二次发送拿不到锁。
     if not app.runs.acquire():
         send_error(handler, 409, "busy")
         return
-    app._handler_stream = handler
-    begin_event_stream(handler)
     try:
+        mode = mode or session_mode(app.settings.workspace, session_id)
+        if mode is None:
+            plan, reflect, subagents = app.settings.plan, app.settings.reflect, app.settings.subagents
+        else:
+            plan, reflect, subagents = _MODES[mode]
+            set_session_mode(app.settings.workspace, session_id, mode)
+        app._handler_stream = handler
+        begin_event_stream(handler)
         status, content = app.runs.run(
             session_id, path, text, plan=plan, reflect=reflect, subagents=subagents
         )
@@ -449,8 +482,8 @@ def _handle_messages(app: WebServer, handler, variables: list[str]) -> None:
 def _message_request(raw: bytes) -> tuple[str, str | None] | None:
     """正文必须是带字符串 ``text`` 的 JSON 对象。
 
-    ``mode`` 可以不写。写出时只能是 ``react``、``plan``、``reflect``。
-    返回 ``(text, mode)``；``mode`` 为 None 表示沿用启动参数。格式不对返回 None。
+    ``mode`` 可以不写。写出时只能是 ``react``、``plan``、``reflect``、``subagents``。
+    省略时优先使用会话模式，未设置的旧会话沿用启动参数。格式不对返回 None。
     """
     payload = object_body(raw)
     if payload is None:

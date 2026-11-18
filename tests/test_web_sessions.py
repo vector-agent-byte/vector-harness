@@ -8,6 +8,8 @@ from vector_harness.web_sessions import (
     is_session_id,
     list_sessions,
     read_messages,
+    session_mode,
+    set_session_mode,
 )
 
 
@@ -62,6 +64,23 @@ def test_list_ignores_names_that_are_not_session_ids(tmp_path: Path):
         encoding="utf-8",
     )
     assert list_sessions(tmp_path) == []
+
+
+def test_session_modes_handle_legacy_and_invalid_values(tmp_path: Path):
+    session_id = create_session(tmp_path)
+    assert session_mode(tmp_path, session_id) is None
+    assert list_sessions(tmp_path)[0]["mode"] == "react"
+    set_session_mode(tmp_path, session_id, "plan")
+    assert session_mode(tmp_path, session_id) == "plan"
+    with pytest.raises(ValueError):
+        set_session_mode(tmp_path, session_id, "unknown")
+    assert session_mode(tmp_path, session_id) == "plan"
+    with pytest.raises(ValueError):
+        session_mode(tmp_path, "../outside")
+    with pytest.raises(FileNotFoundError):
+        set_session_mode(tmp_path, "f" * 32, "react")
+    (tmp_path / ".vector" / "sessions" / f"{session_id}.mode").write_text("unknown", encoding="utf-8")
+    assert session_mode(tmp_path, session_id) is None
 
 
 def test_missing_directory_lists_nothing(tmp_path: Path):

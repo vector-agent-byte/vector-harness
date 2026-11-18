@@ -14,6 +14,8 @@ from uuid import uuid4
 
 from vector_harness.web_children import read_children
 
+SESSION_MODES = frozenset({"react", "plan", "reflect", "subagents"})
+
 
 def is_session_id(value: str) -> bool:
     """32 位小写十六进制才是会话 id。"""
@@ -48,6 +50,7 @@ def list_sessions(workspace: Path) -> list[dict]:
                 "title": _title(path, session_id),
                 "updated_at": path.stat().st_mtime,
                 "skill": _read_skill_file(directory / f"{session_id}.skill"),
+                "mode": session_mode(workspace, session_id) or "react",
                 "started_at": started_at,
                 "duration_ms": duration_ms,
             }
@@ -85,6 +88,26 @@ def set_session_skill(workspace: Path, session_id: str, name: str | None) -> Non
         path.unlink(missing_ok=True)
         return
     path.write_text(name + "\n", encoding="utf-8")
+
+
+def session_mode(workspace: Path, session_id: str) -> str | None:
+    path = session_path(workspace, session_id).with_suffix(".mode")
+    if not path.is_file():
+        return None
+    mode = path.read_text(encoding="utf-8").strip()
+    return mode if mode in SESSION_MODES else None
+
+
+def set_session_mode(workspace: Path, session_id: str, mode: str) -> None:
+    path = session_path(workspace, session_id)
+    if mode not in SESSION_MODES:
+        raise ValueError(mode)
+    if not path.is_file():
+        raise FileNotFoundError(session_id)
+    target = path.with_suffix(".mode")
+    temporary = path.with_suffix(".mode.tmp")
+    temporary.write_text(mode + "\n", encoding="utf-8")
+    temporary.replace(target)
 
 
 def session_run(workspace: Path, session_id: str) -> tuple[float | None, int | None]:
@@ -125,6 +148,7 @@ def delete_session(workspace: Path, session_id: str) -> None:
     (directory / f"{session_id}.skill").unlink(missing_ok=True)
     (directory / f"{session_id}.run.json").unlink(missing_ok=True)
     (directory / f"{session_id}.children.jsonl").unlink(missing_ok=True)
+    (directory / f"{session_id}.mode").unlink(missing_ok=True)
 
 
 def read_messages(workspace: Path, session_id: str) -> list[dict]:
