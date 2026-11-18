@@ -23,8 +23,8 @@ from vector_harness import (
 from vector_harness.types import ProviderEvent
 
 ROOT = Path(__file__).resolve().parents[1]
-WORKSPACE = ROOT / "demo" / "skill-sample"
-SKILLS_DIR = ROOT / "demo" / "skills"
+WORKSPACE = ROOT / "workspace"/ "demo" / "skill-sample"
+SKILLS_DIR = ROOT / "workspace"/ "demo" / "skills"
 SYSTEM = """你是工作目录里的助手。路径只能用相对路径。
 系统提示里只有技能索引。做技能描述的事之前，必须先调用 read_skill，按名字读出正文。
 写文件用 edit_file：文件不存在时 old_string 用空字符串。
