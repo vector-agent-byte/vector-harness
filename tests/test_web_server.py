@@ -707,7 +707,7 @@ def test_workdir_change_keeps_the_session_and_moves_tools(tmp_path: Path):
 
     provider = Capture()
     server = WebServer(
-        WebSettings(workspace=home, memory_path=home / ".vector" / "MEMORY.md"),
+        WebSettings(workspace=home, config_file=home / "config.toml", memory_path=home / ".vector" / "MEMORY.md"),
         provider=provider,
     )
     server.start()
@@ -729,6 +729,8 @@ def test_workdir_change_keeps_the_session_and_moves_tools(tmp_path: Path):
             changed = client.post(f"{base}/api/workdir", json={"path": str(other)})
             assert changed.status_code == 200
             assert changed.json() == {"path": str(other.resolve())}
+            assert client.get(f"{base}/api/workdir").json() == changed.json()
+            assert client.get(f"{base}/api/dirs").json()["path"] == str(other.resolve())
             listed = client.get(f"{base}/api/sessions").json()["sessions"]
             assert any(item["id"] == session_id for item in listed)
             sent = client.post(
@@ -739,6 +741,45 @@ def test_workdir_change_keeps_the_session_and_moves_tools(tmp_path: Path):
         assert "HOME_MEMORY" in provider.system
         assert provider.roots
         assert all(root == other.resolve() for root in provider.roots)
+    finally:
+        server.shutdown()
+    restarted = WebServer(WebSettings(workspace=home, config_file=home / "config.toml"), provider=provider)
+    restarted.start()
+    try:
+        with httpx.Client(trust_env=False) as client:
+            base = f"http://127.0.0.1:{restarted.port}"
+            assert client.get(f"{base}/api/workdir").json() == {"path": str(other.resolve())}
+            assert client.get(f"{base}/api/dirs").json()["path"] == str(other.resolve())
+            assert any(item["id"] == session_id for item in client.get(f"{base}/api/sessions").json()["sessions"])
+            assert client.post(f"{base}/api/sessions/{session_id}/messages", json={"text": "after restart"}).status_code == 200
+            assert all(root == other.resolve() for root in provider.roots)
+    finally:
+        restarted.shutdown()
+
+
+def test_workdir_save_failure_keeps_current_directory_and_config(tmp_path: Path, monkeypatch):
+    from vector_harness import web_server
+
+    config = tmp_path / "config.toml"
+    config.write_text('model = "demo"\n', encoding="utf-8")
+    original = config.read_bytes()
+    target = tmp_path / "other"
+    target.mkdir()
+    server = web_server.WebServer(web_server.WebSettings(workspace=tmp_path, config_file=config), provider=object())
+
+    def fail_save(path, workdir):
+        raise PermissionError("read only")
+
+    monkeypatch.setattr(web_server, "save_workdir", fail_save)
+    server.start()
+    try:
+        with httpx.Client(trust_env=False) as client:
+            base = f"http://127.0.0.1:{server.port}"
+            response = client.post(f"{base}/api/workdir", json={"path": str(target)})
+            assert response.status_code == 500
+            assert response.json() == {"error": "config_save_failed"}
+            assert client.get(f"{base}/api/workdir").json()["path"] == str(tmp_path.resolve())
+            assert config.read_bytes() == original
     finally:
         server.shutdown()
 

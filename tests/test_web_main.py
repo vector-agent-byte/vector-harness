@@ -90,6 +90,43 @@ def test_missing_api_key_exits_before_bind(tmp_path: Path, capsys: pytest.Captur
     assert "VECTOR_API_KEY is not set" in capsys.readouterr().err
 
 
+def test_main_uses_workdir_from_default_config_without_moving_sessions(tmp_path: Path, monkeypatch):
+    from vector_harness import web
+    from vector_harness.web_config import configured_workdir
+
+    root = tmp_path / "sessions-root"
+    root.mkdir()
+    target = tmp_path / "selected-project"
+    target.mkdir()
+    config = tmp_path / "config.toml"
+    config.write_text("workdir = 'selected-project'\n", encoding="utf-8")
+    monkeypatch.setattr(web, "default_config_path", lambda: config)
+    seen = {}
+
+    class Fake:
+        def __init__(self, settings, provider):
+            seen["settings"] = settings
+            seen["workdir"] = configured_workdir(settings.config_file, settings.workspace)
+
+        def serve_forever(self, host, port):
+            pass
+
+    assert web.main(["--workspace", str(root)], provider=object(), server_factory=Fake) == 0
+    assert seen["settings"].workspace == root
+    assert seen["settings"].config_file == config
+    assert seen["workdir"] == target.resolve()
+
+
+@pytest.mark.parametrize("contents", ["workdir = 'missing'\n", "workdir = 42\n", "broken = ["])
+def test_invalid_workspace_config_exits_before_binding(tmp_path: Path, capsys, contents: str):
+    from vector_harness.web import main
+
+    config = tmp_path / "config.toml"
+    config.write_text(contents, encoding="utf-8")
+    assert main(["--workspace", str(tmp_path)], provider=object(), config_file=config) == 1
+    assert "cannot load workspace configuration" in capsys.readouterr().err
+
+
 def test_missing_workspace_exits_before_bind(tmp_path: Path):
     from vector_harness.web import main
 

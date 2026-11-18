@@ -768,7 +768,7 @@ export default function App() {
         body: JSON.stringify({ path }),
       })
       if (!response.ok) {
-        if (response.status >= 400 && response.status < 500) setErrorText(await readError(response))
+        setErrorText(await readError(response))
         return
       }
       const body = (await response.json()) as { path?: unknown }

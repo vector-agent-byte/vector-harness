@@ -71,6 +71,7 @@ export function errorLabel(code: string): string {
   if (code === "bad_path") return "不能改这个位置"
   if (code === "delete_failed") return "删除没有完成"
   if (code === "rename_failed") return "重命名没有完成"
+  if (code === "config_save_failed") return "工作目录配置保存失败，请检查 config.toml 的权限或格式"
   if (code === "unknown_skill") return "没有这个技能"
   return code
 }

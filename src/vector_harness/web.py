@@ -13,7 +13,9 @@ from collections.abc import Callable, Mapping
 from pathlib import Path
 
 from vector_harness.bootstrap import load_provider, memory_path as _memory_path
+from vector_harness.core.config import default_config_path
 from vector_harness.types import ProviderError
+from vector_harness.web_config import CONFIG_ERRORS
 from vector_harness.web_server import WebServer, WebSettings
 
 
@@ -126,6 +128,7 @@ def main(
             return 1
     settings = WebSettings(
         workspace=workspace,
+        config_file=default_config_path() if config_file is None else config_file,
         skills_dir=skills_dir,
         memory_path=_memory_path(args.memory, args.memory_path, workspace),
         compact=args.compact,
@@ -135,7 +138,11 @@ def main(
         max_steps=args.max_steps,
         dist_dir=Path.cwd() / "web" / "dist",
     )
-    server = server_factory(settings, provider)
+    try:
+        server = server_factory(settings, provider)
+    except CONFIG_ERRORS as exc:
+        print(f"cannot load workspace configuration: {exc}", file=sys.stderr)
+        return 1
     if isinstance(server, WebServer):
         busy = _port_busy(args.port)
         if busy is not None:

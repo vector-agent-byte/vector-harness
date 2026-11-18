@@ -17,6 +17,7 @@ from pathlib import Path
 from urllib.parse import quote
 
 from vector_harness.patterns.skills import Skills
+from vector_harness.web_config import CONFIG_ERRORS, configured_workdir, save_workdir
 from vector_harness.web_files import (
     delete_entry,
     dir_listing,
@@ -86,6 +87,7 @@ def _setup_log(log_path: Path) -> None:
 @dataclass(frozen=True, kw_only=True)
 class WebSettings:
     workspace: Path
+    config_file: Path | None = None
     skills_dir: Path | None = None
     memory_path: Path | None = None
     compact: bool = False
@@ -99,7 +101,10 @@ class WebSettings:
 class WebServer:
     def __init__(self, settings: WebSettings, provider: object) -> None:
         self.settings = settings
-        self.workdir = settings.workspace.resolve()
+        self.workdir = (
+            configured_workdir(settings.config_file, settings.workspace)
+            if settings.config_file is not None else settings.workspace.resolve()
+        )
         self.provider = provider
         _setup_log(settings.workspace / ".vector" / "server.log")
         self.port = 0
@@ -528,7 +533,14 @@ def _handle_set_workdir(app: WebServer, handler, _variables: list[str]) -> None:
         send_error(handler, 409, "busy")
         return
     try:
-        app.workdir = Path(listing["path"])
+        workdir = Path(listing["path"])
+        if app.settings.config_file is not None:
+            try:
+                save_workdir(app.settings.config_file, workdir)
+            except CONFIG_ERRORS:
+                send_error(handler, 500, "config_save_failed")
+                return
+        app.workdir = workdir
         send_json(handler, 200, {"path": str(app.workdir)})
     finally:
         app.runs.release()

@@ -34,6 +34,7 @@
 api_key = "..."
 base_url = "https://example/v1"
 model = "..."
+workdir = 'D:\CODE_WORKSPACE\my-project'
 ```
 
 终端和嵌入的优先级不同：
@@ -90,6 +91,8 @@ python -m vector_harness.web --workspace .
 ```
 
 只监听 `127.0.0.1`，没有 `--host`。默认地址是 `http://127.0.0.1:8787/`。`--port` 改端口，`--open` 启动后打开浏览器。连接信息的优先级和终端相同。
+
+网页工作目录由 `~/.vector-harness/config.toml` 顶层的 `workdir` 指定。未配置时使用 `--workspace`（默认当前目录）；相对路径以配置文件所在目录为基准。页面确认切换工作目录时会立即写回这一项，保留模型连接设置、其他配置和注释，刷新或重启服务后恢复。配置目录不存在或不是文件夹时启动会报错，请修正该项。`--workspace` 仍决定会话、日志及默认记忆的存储位置，切换 `workdir` 不会迁移历史会话。
 
 页面可以新建、打开和删除会话。会话留在启动时那个工作目录的 `.vector/sessions/` 里，一份会话一个 JSONL。同一时间只能跑一轮。运行中可以停止，正在执行的命令会一起结束。助手回复按 Markdown 显示。回车发送，Shift+回车换行。
 
