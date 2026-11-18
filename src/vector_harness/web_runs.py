@@ -20,6 +20,7 @@ from vector_harness.bootstrap import build_agent
 from vector_harness.core.session import Session
 from vector_harness.tools.shell import Shell, signal_kill
 from vector_harness.types import Message, ProviderEvent, Role
+from vector_harness.web_children import ChildTrace
 from vector_harness.web_sessions import begin_run, finish_run, session_skill
 
 _logger = logging.getLogger("vector_harness.web")
@@ -92,9 +93,11 @@ class RunManager:
         begin_run(workspace, session_id)
         _logger.info("run start  session=%s text=%.120r", session_id, text)
         fragment: list[str] = []
+        child_trace = ChildTrace(session_path)
 
         def on_event(event: ProviderEvent) -> None:
-            if event.kind == "tool_call_end":
+            child_trace.record(event)
+            if event.kind == "tool_call_end" and event.origin != "child":
                 fragment.clear()
             elif event.kind == "text_delta" and event.origin != "child" and event.text:
                 fragment.append(event.text)

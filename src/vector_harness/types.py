@@ -36,6 +36,7 @@ class EventKind(StrEnum):
     TEXT_DELTA = "text_delta"
     TOOL_CALL_START = "tool_call_start"
     TOOL_CALL_END = "tool_call_end"
+    TOOL_EXECUTION_START = "tool_execution_start"
     TOOL_RESULT = "tool_result"
     RUN_END = "run_end"
 
@@ -103,7 +104,9 @@ class ProviderEvent:
     """模型流向外发出的一个观察事件。
 
     ``kind`` 有 ``thinking_delta``、``text_delta``、``tool_call_start``、
-    ``tool_call_end``、``run_end``。这是终端的观察口，不是模式插件。
+    ``tool_call_end``、``tool_execution_start``、``tool_result``、``run_end``。
+    ``tool_execution_start`` 在分发每个工具调用时发出，用于关联执行期间的子代理事件。
+    这是终端的观察口，不是模式插件。
     ``thinking_delta`` 是模型的思考过程，只给观察方看，不写入会话。
     ``tool_call_start`` 的 ``arguments`` 保持 ``None``，参数要等
     ``tool_call_end`` 才完整。``origin`` 为空是当前循环，``child`` 是子代理。

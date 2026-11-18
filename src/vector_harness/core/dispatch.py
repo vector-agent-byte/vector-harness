@@ -51,6 +51,12 @@ class ToolDispatcher:
         tool_map = {tool.name: tool for tool in self.tools}
         known = set(tool_map)
         for call in tool_calls:
+            if self.on_event is not None:
+                self.on_event(ProviderEvent(
+                    kind=EventKind.TOOL_EXECUTION_START,
+                    name=call.name,
+                    tool_call_id=call.id,
+                ))
             reason = rejection_reason(call, known)
             if reason is not None:
                 self._append_error(call, reason)

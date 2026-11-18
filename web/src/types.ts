@@ -28,6 +28,7 @@ export type ToolCall = {
   id: string
   name: string
   args: Record<string, unknown> | null
+  child?: LiveSection
 }
 
 export type ChatMessage = {
@@ -45,6 +46,7 @@ export type LiveTool = {
 }
 
 export type LiveSection = {
+  toolCallId?: string
   thinking: string
   text: string
   tools: LiveTool[]

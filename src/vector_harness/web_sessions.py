@@ -12,6 +12,8 @@ import time
 from pathlib import Path
 from uuid import uuid4
 
+from vector_harness.web_children import read_children
+
 
 def is_session_id(value: str) -> bool:
     """32 位小写十六进制才是会话 id。"""
@@ -112,7 +114,7 @@ def finish_run(workspace: Path, session_id: str) -> None:
 
 
 def delete_session(workspace: Path, session_id: str) -> None:
-    """删掉会话正文、选中的技能和这一轮的计时。文件不存在时抛出 FileNotFoundError。"""
+    """删掉会话正文、子代理记录、选中的技能和计时。文件不存在时抛出 FileNotFoundError。"""
     if not is_session_id(session_id):
         raise ValueError(session_id)
     directory = _sessions_dir(workspace)
@@ -122,6 +124,7 @@ def delete_session(workspace: Path, session_id: str) -> None:
     path.unlink()
     (directory / f"{session_id}.skill").unlink(missing_ok=True)
     (directory / f"{session_id}.run.json").unlink(missing_ok=True)
+    (directory / f"{session_id}.children.jsonl").unlink(missing_ok=True)
 
 
 def read_messages(workspace: Path, session_id: str) -> list[dict]:
@@ -134,7 +137,18 @@ def read_messages(workspace: Path, session_id: str) -> list[dict]:
     path = _sessions_dir(workspace) / f"{session_id}.jsonl"
     if not path.is_file():
         raise FileNotFoundError(path)
-    return list(_objects(path))
+    messages = list(_objects(path))
+    children = read_children(path)
+    for message in messages:
+        calls = message.get("tool_calls")
+        if not isinstance(calls, list):
+            continue
+        for call in calls:
+            if isinstance(call, dict) and call.get("name") == "delegate" and isinstance(call.get("id"), str):
+                child = children.get(call["id"])
+                if child is not None:
+                    call["child"] = child
+    return messages
 
 
 def _sessions_dir(workspace: Path) -> Path:

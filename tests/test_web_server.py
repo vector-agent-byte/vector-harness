@@ -13,7 +13,7 @@ import pytest
 
 from tests.scripted import ScriptedProvider, ScriptedTurn
 from vector_harness.cli import DEFAULT_SYSTEM
-from vector_harness.types import ProviderEvent
+from vector_harness.types import ProviderEvent, ToolCall
 from vector_harness.web_server import WebServer, WebSettings
 from vector_harness.web_sessions import create_session, is_session_id
 
@@ -69,6 +69,99 @@ def test_lists_creates_and_reads_a_session(tmp_path: Path):
             }
             assert client.get(f"{base}/api/unknown").status_code == 404
     finally:
+        server.shutdown()
+
+
+def test_child_history_survives_completion_multiple_turns_and_server_restart(tmp_path: Path):
+    session_id = create_session(tmp_path)
+    provider = ScriptedProvider([
+        ScriptedTurn(tool_calls=[
+            ToolCall(id="rejected", name="delegate", arguments={"_invalid_json": "bad"}),
+            ToolCall(id="first", name="delegate", arguments={"task": "first task"}),
+            ToolCall(id="second", name="delegate", arguments={"task": "second task"}),
+        ]),
+        ScriptedTurn(thinking="first thought", tool_calls=[
+            ToolCall(id="child-tool", name="missing", arguments={"value": 1}),
+        ]),
+        ScriptedTurn(content="first result"),
+        ScriptedTurn(thinking="second thought", content="second result"),
+        ScriptedTurn(content="parent result"),
+        ScriptedTurn(tool_calls=[ToolCall(id="third", name="delegate", arguments={"task": "third task"})]),
+        ScriptedTurn(thinking="third thought", content="third result"),
+        ScriptedTurn(content="parent final"),
+    ])
+    server = WebServer(WebSettings(workspace=tmp_path), provider)
+    server.start()
+    try:
+        with httpx.Client(trust_env=False, timeout=10) as client:
+            base = f"http://127.0.0.1:{server.port}"
+            for prompt in ["first round", "second round"]:
+                response = client.post(f"{base}/api/sessions/{session_id}/messages", json={"text": prompt, "mode": "subagents"})
+                assert response.status_code == 200
+                assert '"status": "complete"' in response.text
+            messages = client.get(f"{base}/api/sessions/{session_id}").json()["messages"]
+        calls = {call["id"]: call for message in messages for call in message.get("tool_calls") or []}
+        assert "child" not in calls["rejected"]
+        for name in ["first", "second", "third"]:
+            assert calls[name]["child"]["thinking"] == f"{name} thought"
+            assert calls[name]["child"]["text"] == f"{name} result"
+        assert calls["first"]["child"]["tools"] == [{"name": "missing", "args": {"value": 1}}]
+    finally:
+        server.shutdown()
+    restarted = WebServer(WebSettings(workspace=tmp_path), provider=object())
+    restarted.start()
+    try:
+        with httpx.Client(trust_env=False) as client:
+            restored = client.get(f"http://127.0.0.1:{restarted.port}/api/sessions/{session_id}").json()["messages"]
+        assert restored == messages
+    finally:
+        restarted.shutdown()
+
+
+def test_refresh_and_stop_preserve_partial_child_history(tmp_path: Path):
+    session_id = create_session(tmp_path)
+    wrote = threading.Event()
+
+    class PausedChild:
+        async def stream(self, *, system: str, messages: list, tools: list):
+            if any(tool.name == "delegate" for tool in tools):
+                yield ProviderEvent(kind="tool_call_end", name="delegate", tool_call_id="active-child", arguments={"task": "work"})
+            else:
+                yield ProviderEvent(kind="thinking_delta", text="child is thinking")
+                yield ProviderEvent(kind="text_delta", text="partial child reply")
+                wrote.set()
+                await asyncio.Event().wait()
+
+    server = WebServer(WebSettings(workspace=tmp_path), PausedChild())
+    server.start()
+    holder = {}
+
+    def post():
+        with httpx.Client(trust_env=False, timeout=None) as client:
+            holder["response"] = client.post(
+                f"http://127.0.0.1:{server.port}/api/sessions/{session_id}/messages",
+                json={"text": "start", "mode": "subagents"},
+            )
+
+    worker = threading.Thread(target=post)
+    worker.start()
+    try:
+        assert wrote.wait(5)
+        with httpx.Client(trust_env=False, timeout=5) as client:
+            base = f"http://127.0.0.1:{server.port}"
+            during = client.get(f"{base}/api/sessions/{session_id}").json()["messages"]
+            child = during[-1]["tool_calls"][0]["child"]
+            assert child == {"thinking": "child is thinking", "text": "partial child reply", "tools": []}
+            assert client.post(f"{base}/api/sessions/{session_id}/stop").json() == {"stopped": True}
+            worker.join(5)
+            assert not worker.is_alive()
+            assert '"status": "stopped"' in holder["response"].text
+            after = client.get(f"{base}/api/sessions/{session_id}").json()["messages"]
+            assert after == during
+    finally:
+        if worker.is_alive():
+            server.request_stop(session_id)
+            worker.join(5)
         server.shutdown()
 
 

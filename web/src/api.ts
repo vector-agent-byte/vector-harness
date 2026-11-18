@@ -2,6 +2,7 @@ import type {
   ChatMessage,
   DirEntry,
   DirListing,
+  LiveSection,
   SessionList,
   SessionItem,
   SkillItem,
@@ -50,9 +51,25 @@ export function normalizeTools(value: unknown): ToolCall[] | null {
         record.arguments && typeof record.arguments === "object"
           ? (record.arguments as Record<string, unknown>)
           : null,
+      child: normalizeChild(record.child),
     })
   }
   return tools
+}
+
+export function normalizeChild(value: unknown): LiveSection | undefined {
+  if (!value || typeof value !== "object") return undefined
+  const record = value as Record<string, unknown>
+  return {
+    thinking: typeof record.thinking === "string" ? record.thinking : "",
+    text: typeof record.text === "string" ? record.text : "",
+    tools: Array.isArray(record.tools) ? record.tools.flatMap((tool: unknown) => {
+      if (!tool || typeof tool !== "object") return []
+      const item = tool as Record<string, unknown>
+      if (typeof item.name !== "string") return []
+      return [{ name: item.name, args: item.args && typeof item.args === "object" ? item.args as Record<string, unknown> : null }]
+    }) : [],
+  }
 }
 
 export function normalizeMessages(value: unknown): ChatMessage[] {
