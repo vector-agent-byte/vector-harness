@@ -55,11 +55,15 @@ import type {
   TodoItem,
 } from "./types.ts"
 import "./App.css"
+import DeepResearch from "./DeepResearch.tsx"
 
 const POLL_MS = 1000
 const OPEN_SESSION_KEY = "vector-open-session"
 
 export default function App() {
+  const [appView, setAppView] = useState<"agent" | "deepresearch">(
+    () => (localStorage.getItem("vh-app-view") as "agent" | "deepresearch") ?? "agent"
+  )
   const [sessions, setSessions] = useState<SessionItem[]>([])
   const [runningId, setRunningId] = useState<string | null>(null)
   const [openId, setOpenId] = useState<string | null>(null)
@@ -238,6 +242,10 @@ export default function App() {
       return null
     }
   }, [])
+
+  useEffect(() => {
+    localStorage.setItem("vh-app-view", appView)
+  }, [appView])
 
   useEffect(() => {
     const timer = window.setInterval(() => {
@@ -1163,13 +1171,52 @@ export default function App() {
 
   return (
     <div className="app">
-      <aside className="sidebar" style={{ width: sidebarWidth }}>
-        <div className="brand">
-          <svg className="brand-whale" aria-hidden="true" viewBox="0 0 48 46" fill="none" xmlns="http://www.w3.org/2000/svg">
-            <path fill="#1a1a1a" d="M25.946 44.938c-.664.845-2.021.375-2.021-.698V33.937a2.26 2.26 0 0 0-2.262-2.262H10.287c-.92 0-1.456-1.04-.92-1.788l7.48-10.471c1.07-1.497 0-3.578-1.842-3.578H1.237c-.92 0-1.456-1.04-.92-1.788L10.013.474c.214-.297.556-.474.92-.474h28.894c.92 0 1.456 1.04.92 1.788l-7.48 10.471c-1.07 1.498 0 3.579 1.842 3.579h11.377c.943 0 1.473 1.088.89 1.83L25.947 44.94z"/>
+      {/* Activity bar — far-left icon strip */}
+      <div className="activity-bar">
+        <div className="activity-logo" title="Vector Harness">
+          <svg aria-hidden="true" viewBox="0 0 48 46" fill="none" xmlns="http://www.w3.org/2000/svg">
+            <path fill="currentColor" d="M25.946 44.938c-.664.845-2.021.375-2.021-.698V33.937a2.26 2.26 0 0 0-2.262-2.262H10.287c-.92 0-1.456-1.04-.92-1.788l7.48-10.471c1.07-1.497 0-3.578-1.842-3.578H1.237c-.92 0-1.456-1.04-.92-1.788L10.013.474c.214-.297.556-.474.92-.474h28.894c.92 0 1.456 1.04.92 1.788l-7.48 10.471c-1.07 1.498 0 3.579 1.842 3.579h11.377c.943 0 1.473 1.088.89 1.83L25.947 44.94z"/>
           </svg>
-          Vector Harness
         </div>
+        <nav className="activity-nav" aria-label="视图切换">
+          <button
+            type="button"
+            className={appView === "agent" ? "activity-item is-active" : "activity-item"}
+            title="Agent"
+            aria-label="Agent"
+            onClick={() => setAppView("agent")}
+          >
+            {/* Chat/agent icon */}
+            <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+              <path d="M17 10c0 3.866-3.134 7-7 7a6.97 6.97 0 0 1-3.5-.938L3 17l.938-3.5A6.97 6.97 0 0 1 3 10c0-3.866 3.134-7 7-7s7 3.134 7 7z"/>
+              <circle cx="7.5" cy="10" r=".75" fill="currentColor" stroke="none"/>
+              <circle cx="10" cy="10" r=".75" fill="currentColor" stroke="none"/>
+              <circle cx="12.5" cy="10" r=".75" fill="currentColor" stroke="none"/>
+            </svg>
+          </button>
+          <button
+            type="button"
+            className={appView === "deepresearch" ? "activity-item is-active" : "activity-item"}
+            title="深度研究"
+            aria-label="深度研究"
+            onClick={() => setAppView("deepresearch")}
+          >
+            {/* Research/search icon */}
+            <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+              <circle cx="8.5" cy="8.5" r="5"/>
+              <path d="m13 13 3.5 3.5"/>
+              <path d="M6.5 8.5h4M8.5 6.5v4" strokeWidth="1.3"/>
+            </svg>
+          </button>
+        </nav>
+      </div>
+
+      {appView === "deepresearch" ? (
+        <DeepResearch />
+      ) : (
+      <>
+      <aside className="sidebar" style={{ width: sidebarWidth }}>
+        <div className="brand">Vector Harness</div>
         <button type="button" className="new-session" onClick={() => void createSession()}>
           <svg className="new-session-icon" aria-hidden="true" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
             <circle cx="8" cy="8" r="6.5" />
@@ -1879,6 +1926,8 @@ export default function App() {
           </div>
         </div>
       ) : null}
+      </>
+      )}
     </div>
   )
 }
