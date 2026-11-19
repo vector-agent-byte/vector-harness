@@ -3,7 +3,7 @@ from pathlib import Path
 
 import pytest
 
-from vector_harness.web_sessions import (
+from vector_harness.web.sessions import (
     create_session,
     is_session_id,
     list_sessions,

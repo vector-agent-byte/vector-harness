@@ -12,7 +12,7 @@ from vector_harness.patterns.compact import Compaction
 from vector_harness.patterns.task_state import TaskState
 from vector_harness.tools.history import ReadSessionHistory
 from vector_harness.types import ProviderError
-from vector_harness.web_sessions import create_session, read_session_view, session_path
+from vector_harness.web.sessions import create_session, read_session_view, session_path
 
 
 @pytest.mark.parametrize("source", ["missing", "failed", "different"])

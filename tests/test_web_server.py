@@ -14,8 +14,8 @@ import pytest
 from tests.scripted import ScriptedProvider, ScriptedTurn
 from vector_harness.cli import DEFAULT_SYSTEM
 from vector_harness.types import ProviderEvent, ToolCall
-from vector_harness.web_server import WebServer, WebSettings
-from vector_harness.web_sessions import create_session, is_session_id
+from vector_harness.web.server import WebServer, WebSettings
+from vector_harness.web.sessions import create_session, is_session_id
 
 
 @pytest.fixture(autouse=True)
@@ -24,15 +24,10 @@ def _drop_web_modules():
     for name in list(sys.modules):
         if name in {
             "vector_harness.web",
-            "vector_harness.web_server",
-            "vector_harness.web_http",
-            "vector_harness.web_files",
-            "vector_harness.web_runs",
-            "vector_harness.web_sessions",
             "vector_harness.bootstrap",
             "vector_harness.cli",
             "vector_harness.assembly",
-        } or name == "vector_harness.patterns" or name.startswith(
+        } or name.startswith("vector_harness.web.") or name == "vector_harness.patterns" or name.startswith(
             "vector_harness.patterns."
         ):
             del sys.modules[name]
@@ -905,7 +900,7 @@ def test_workdir_change_keeps_the_session_and_moves_tools(tmp_path: Path):
 
 
 def test_workdir_save_failure_keeps_current_directory_and_config(tmp_path: Path, monkeypatch):
-    from vector_harness import web_server
+    from vector_harness.web import server as web_server
 
     config = tmp_path / "config.toml"
     config.write_text('model = "demo"\n', encoding="utf-8")
@@ -1333,7 +1328,7 @@ def test_failed_tree_delete_is_not_reported_as_missing(tmp_path: Path, monkeypat
     def locked(path: Path) -> None:
         raise OSError("locked")
 
-    monkeypatch.setattr("vector_harness.web_files.shutil.rmtree", locked)
+    monkeypatch.setattr("vector_harness.web.files.shutil.rmtree", locked)
     server = WebServer(WebSettings(workspace=tmp_path), provider=object())
     server.start()
     try:

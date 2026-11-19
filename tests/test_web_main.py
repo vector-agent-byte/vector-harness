@@ -9,7 +9,7 @@ from urllib.parse import urlsplit
 
 import pytest
 
-from vector_harness.web_server import WebServer, WebSettings
+from vector_harness.web.server import WebServer, WebSettings
 
 
 def _drop_loaded_web_modules() -> None:
@@ -17,15 +17,10 @@ def _drop_loaded_web_modules() -> None:
     for name in list(sys.modules):
         if name in {
             "vector_harness.web",
-            "vector_harness.web_server",
-            "vector_harness.web_http",
-            "vector_harness.web_files",
-            "vector_harness.web_runs",
-            "vector_harness.web_sessions",
             "vector_harness.bootstrap",
             "vector_harness.cli",
             "vector_harness.assembly",
-        } or name == "vector_harness.patterns" or name.startswith(
+        } or name.startswith("vector_harness.web.") or name == "vector_harness.patterns" or name.startswith(
             "vector_harness.patterns."
         ):
             del sys.modules[name]
@@ -92,7 +87,7 @@ def test_missing_api_key_exits_before_bind(tmp_path: Path, capsys: pytest.Captur
 
 def test_main_uses_workdir_from_default_config_without_moving_sessions(tmp_path: Path, monkeypatch):
     from vector_harness import web
-    from vector_harness.web_config import configured_workdir
+    from vector_harness.web.config import configured_workdir
 
     root = tmp_path / "sessions-root"
     root.mkdir()
@@ -232,7 +227,7 @@ def test_taken_port_returns_1(tmp_path: Path):
 
 def test_open_connects_after_the_socket_is_listening(tmp_path: Path):
     from vector_harness.web import main
-    from vector_harness.web_server import WebServer
+    from vector_harness.web.server import WebServer
 
     created: list[WebServer] = []
 

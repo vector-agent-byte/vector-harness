@@ -8,7 +8,7 @@ from tests.scripted import ScriptedProvider, ScriptedTurn
 from vector_harness import Message, Session
 from vector_harness.core.loop import Loop
 from vector_harness.core.session_state import SessionArtifacts
-from vector_harness.web_sessions import create_session, delete_session, list_sessions, read_session_view, session_path
+from vector_harness.web.sessions import create_session, delete_session, list_sessions, read_session_view, session_path
 
 
 @pytest.fixture(autouse=True)
@@ -98,7 +98,7 @@ def test_web_get_is_idle_and_post_restores_checkpoint(tmp_path):
 
     from tests.scripted import summary_json
     from vector_harness.patterns.compact import Compaction
-    from vector_harness.web_server import WebServer, WebSettings
+    from vector_harness.web.server import WebServer, WebSettings
 
     identifier = create_session(tmp_path)
     path = session_path(tmp_path, identifier)
@@ -129,7 +129,7 @@ def test_web_get_is_idle_and_post_restores_checkpoint(tmp_path):
 def test_web_get_corruption_warnings_and_post_error(tmp_path):
     import httpx
 
-    from vector_harness.web_server import WebServer, WebSettings
+    from vector_harness.web.server import WebServer, WebSettings
 
     identifier = create_session(tmp_path)
     path = session_path(tmp_path, identifier)

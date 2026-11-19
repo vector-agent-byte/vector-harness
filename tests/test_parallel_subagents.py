@@ -8,8 +8,8 @@ from vector_harness.core.loop import Loop
 from vector_harness.core.session import Session
 from vector_harness.patterns.subagent import attach_delegate, delegate_tool
 from vector_harness.types import Message, ProviderEvent, ToolCall, ToolHookResult
-from vector_harness.web_children import ChildTrace, read_children
-from vector_harness.web_http import event_payload
+from vector_harness.web.children import ChildTrace, read_children
+from vector_harness.web.http import event_payload
 
 
 @dataclass

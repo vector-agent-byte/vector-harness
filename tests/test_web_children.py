@@ -3,8 +3,8 @@ from pathlib import Path
 
 from vector_harness.core.session import Session
 from vector_harness.types import Message, ProviderEvent, Role, ToolCall
-from vector_harness.web_children import ChildTrace, read_children
-from vector_harness.web_sessions import create_session, delete_session, list_sessions, read_messages, session_path
+from vector_harness.web.children import ChildTrace, read_children
+from vector_harness.web.sessions import create_session, delete_session, list_sessions, read_messages, session_path
 
 
 def test_child_trace_is_readable_during_execution_and_kept_out_of_model_context(tmp_path: Path):

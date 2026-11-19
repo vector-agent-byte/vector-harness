@@ -18,7 +18,7 @@ from vector_harness.bootstrap import (
 from vector_harness.cli_render import _Printer
 from vector_harness.core.session import Session
 from vector_harness.types import ProviderError
-from vector_harness.web_sessions import session_path
+from vector_harness.web.sessions import session_path
 
 __all__ = [
     "DEFAULT_SYSTEM",

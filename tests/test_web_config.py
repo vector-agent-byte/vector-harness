@@ -3,7 +3,7 @@ from pathlib import Path
 
 import pytest
 
-from vector_harness.web_config import CONFIG_ERRORS, configured_workdir, save_workdir
+from vector_harness.web.config import CONFIG_ERRORS, configured_workdir, save_workdir
 
 
 def test_missing_workdir_uses_workspace_without_creating_config(tmp_path: Path):
