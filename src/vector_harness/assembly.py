@@ -36,6 +36,37 @@ DEFAULT_KEEP_LAST = 8
 DEFAULT_CHILD_MAX_STEPS = 50
 
 
+def runner_chain(runner: object) -> str:
+    """从外到内列出运行对象的类型名，直到工具循环。"""
+    names: list[str] = []
+    current = runner
+    while current is not None:
+        names.append(type(current).__name__)
+        inner = getattr(current, "inner", None)
+        if inner is not None:
+            current = inner
+            continue
+        loop = getattr(current, "loop", None)
+        if loop is not None and loop is not current:
+            current = loop
+            continue
+        break
+    return " -> ".join(names)
+
+
+def runner_chain_for_flags(*, plan: bool, reflect: bool) -> str:
+    """根据模式标志返回运行链字符串，不实际构建对象。"""
+    from vector_harness.patterns.plan import TodoPlan
+    from vector_harness.patterns.reflect import ToolReflect
+    names: list[str] = []
+    if reflect:
+        names.append(ToolReflect.__name__)
+    if plan:
+        names.append(TodoPlan.__name__)
+    names.append(Loop.__name__)
+    return " -> ".join(names)
+
+
 def apply_patterns(
     loop: Loop,
     runner: Runnable,

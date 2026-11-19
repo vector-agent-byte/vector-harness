@@ -1998,3 +1998,129 @@
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
 }
+
+/* ── 运行链视图 ── */
+.chain-view {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 40px 24px 60px;
+}
+
+.chain-heading {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: #9ca3af;
+  margin-bottom: 28px;
+}
+
+.chain-nodes {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+
+.chain-step {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+
+.chain-node {
+  width: 300px;
+  padding: 14px 20px 16px;
+  background: #fff;
+  border: 1.5px solid #e5e5e5;
+  border-radius: 10px;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.06);
+}
+
+.chain-node-name {
+  font-family: ui-monospace, "SF Mono", Menlo, "Consolas", monospace;
+  font-size: 13px;
+  font-weight: 600;
+  color: #1a1a1a;
+  margin-bottom: 2px;
+}
+
+.chain-node-title {
+  font-size: 12px;
+  font-weight: 600;
+  margin-bottom: 3px;
+}
+
+.chain-node-desc {
+  font-size: 12px;
+  color: #6b7280;
+  line-height: 1.45;
+}
+
+.chain-node-blue  { border-color: #93c5fd; background: #eff6ff; }
+.chain-node-blue  .chain-node-name  { color: #1d4ed8; }
+.chain-node-blue  .chain-node-title { color: #1d4ed8; }
+
+.chain-node-amber { border-color: #fcd34d; background: #fffbeb; }
+.chain-node-amber .chain-node-name  { color: #92400e; }
+.chain-node-amber .chain-node-title { color: #92400e; }
+
+.chain-node-purple { border-color: #c4b5fd; background: #f5f3ff; }
+.chain-node-purple .chain-node-name  { color: #5b21b6; }
+.chain-node-purple .chain-node-title { color: #5b21b6; }
+
+.chain-node-gray { border-color: #e5e5e5; background: #fafafa; }
+.chain-node-gray .chain-node-name  { color: #374151; }
+
+.chain-connector {
+  width: 2px;
+  height: 28px;
+  background: #d1d5db;
+  flex: none;
+}
+
+.chain-subagent {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px dashed #bfdbfe;
+}
+
+.chain-subagent-line {
+  flex: none;
+  width: 12px;
+  height: 2px;
+  background: #93c5fd;
+  margin-top: 9px;
+}
+
+.chain-subagent-node {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 5px;
+}
+
+.chain-subagent-name {
+  font-family: ui-monospace, "SF Mono", Menlo, "Consolas", monospace;
+  font-size: 12px;
+  font-weight: 600;
+  color: #1d4ed8;
+}
+
+.chain-subagent-arrow {
+  font-size: 12px;
+  color: #93c5fd;
+}
+
+.chain-subagent-desc {
+  width: 100%;
+  font-size: 11px;
+  color: #6b7280;
+  margin-top: 2px;
+}

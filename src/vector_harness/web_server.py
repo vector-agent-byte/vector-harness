@@ -343,6 +343,9 @@ def _handle_read_session(app: WebServer, handler, variables: list[str]) -> None:
         send_error(handler, 404, "not_found")
         return
     started_at, duration_ms = session_run(workspace, session_id)
+    mode = session_mode(workspace, session_id) or "react"
+    plan, reflect, subagents = _MODES.get(mode, (False, False, False))
+    from vector_harness.assembly import runner_chain_for_flags
     send_json(
         handler,
         200,
@@ -352,7 +355,9 @@ def _handle_read_session(app: WebServer, handler, variables: list[str]) -> None:
             "warnings": view["warnings"],
             "skill": session_skill(workspace, session_id),
             "skills": session_skills(workspace, session_id),
-            "mode": session_mode(workspace, session_id) or "react",
+            "mode": mode,
+            "runner_chain": runner_chain_for_flags(plan=plan, reflect=reflect),
+            "subagents": subagents,
             "started_at": started_at,
             "duration_ms": duration_ms,
         },

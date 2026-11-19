@@ -62,6 +62,11 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--max-steps", type=int, default=25)
     parser.add_argument("--model", default=None)
     parser.add_argument("--base-url", default=None)
+    parser.add_argument(
+        "--show-chain",
+        action="store_true",
+        help="Print the runner chain for the given flags and exit.",
+    )
     parser.add_argument("task", nargs="*")
     return parser
 
@@ -140,6 +145,10 @@ def main(
         fetch=args.fetch,
         max_steps=args.max_steps,
     )
+    if args.show_chain:
+        from vector_harness.assembly import runner_chain
+        print(runner_chain(agent))
+        return 0
     printer = _Printer(sys.stdout)
     agent.loop.on_event = printer.on_event
     result = asyncio.run(

@@ -154,3 +154,55 @@ export function TraceView({ messages, live }: { messages: ChatMessage[]; live: L
     </div>
   )
 }
+
+const CHAIN_NODE_INFO: Record<string, { title: string; desc: string; color: string }> = {
+  ToolReflect: { title: "反思审查", desc: "执行完成后调用审查官，不通过则注入批评重跑", color: "purple" },
+  TodoPlan:    { title: "计划分解", desc: "先用 update_todos 拆任务，逐步推进直到全部完成", color: "amber" },
+  Loop:        { title: "工具循环", desc: "ReAct 核心：模型请求 → 执行工具 → 再请求", color: "blue" },
+}
+
+export function ChainView({ chain, subagents }: { chain: string; subagents?: boolean }) {
+  if (!chain) {
+    return <div className="chain-view"><div className="trace-empty">暂无运行链信息</div></div>
+  }
+  const nodes = chain.split(" -> ")
+  return (
+    <div className="chain-view">
+      <div className="chain-heading">运行链 · 从外到内</div>
+      <div className="chain-nodes">
+        {nodes.map((name, index) => {
+          const info = CHAIN_NODE_INFO[name]
+          const color = info?.color ?? "gray"
+          const isLoop = name === "Loop"
+          return (
+            <div key={name} className="chain-step">
+              <div className={`chain-node chain-node-${color}`}>
+                <div className="chain-node-name">{name}</div>
+                {info ? (
+                  <>
+                    <div className="chain-node-title">{info.title}</div>
+                    <div className="chain-node-desc">{info.desc}</div>
+                  </>
+                ) : null}
+                {isLoop && subagents ? (
+                  <div className="chain-subagent">
+                    <div className="chain-subagent-line" aria-hidden="true" />
+                    <div className="chain-subagent-node">
+                      <span className="chain-subagent-name">delegate</span>
+                      <span className="chain-subagent-arrow" aria-hidden="true">→</span>
+                      <span className="chain-subagent-name">子 Loop</span>
+                      <span className="chain-subagent-desc">并行子代理，独立内存会话</span>
+                    </div>
+                  </div>
+                ) : null}
+              </div>
+              {index < nodes.length - 1 ? (
+                <div className="chain-connector" aria-hidden="true" />
+              ) : null}
+            </div>
+          )
+        })}
+      </div>
+    </div>
+  )
+}

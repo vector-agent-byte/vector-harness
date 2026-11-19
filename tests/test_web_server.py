@@ -67,6 +67,8 @@ def test_lists_creates_and_reads_a_session(tmp_path: Path):
                 "skill": None,
                 "skills": None,
                 "mode": "react",
+                "runner_chain": "Loop",
+                "subagents": False,
                 "started_at": None,
                 "duration_ms": None,
             }

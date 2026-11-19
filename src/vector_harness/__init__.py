@@ -42,13 +42,18 @@ __all__ = [
     "EditFile",
     "Shell",
     "Calculator",
+    "runner_chain",
 ]
 
 
 def __getattr__(name: str):
-    """``attach`` 单独延迟导出，避免导入本包时加载模式。"""
+    """``attach`` 和 ``runner_chain`` 单独延迟导出，避免导入本包时加载模式。"""
     if name == "attach":
         from vector_harness.assembly import attach
 
         return attach
+    if name == "runner_chain":
+        from vector_harness.assembly import runner_chain
+
+        return runner_chain
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

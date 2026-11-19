@@ -31,6 +31,7 @@ import {
   viewedPath,
 } from "./format.ts"
 import {
+  ChainView,
   Markdown,
   ReflectionCard,
   StatusNote,
@@ -98,7 +99,9 @@ export default function App() {
   const [dialogSize, setDialogSize] = useState<{ width: number; height: number } | null>(null)
   const [sidebarWidth, setSidebarWidth] = useState(220)
   const [workdirWidth, setWorkdirWidth] = useState(260)
-  const [viewMode, setViewMode] = useState<"chat" | "trace">("chat")
+  const [viewMode, setViewMode] = useState<"chat" | "trace" | "chain">("chat")
+  const [runnerChain, setRunnerChain] = useState("")
+  const [runnerSubagents, setRunnerSubagents] = useState(false)
 
   const openIdRef = useRef<string | null>(null)
   const readingStreamRef = useRef(false)
@@ -182,6 +185,10 @@ export default function App() {
       setErrorText(current => openIdRef.current === id
         ? warnings[0] ?? (current?.startsWith("session_") ? null : current)
         : current)
+    }
+    if (openIdRef.current === id && typeof body.runner_chain === "string") {
+      setRunnerChain(body.runner_chain)
+      setRunnerSubagents(body.subagents === true)
     }
     return normalizeMessages(body.messages)
   }, [refreshList])
@@ -869,6 +876,8 @@ export default function App() {
     const previous = openIdRef.current
     if (previous && previous !== id) cacheRef.current.set(previous, messagesRef.current)
     rememberOpen(id)
+    setRunnerChain("")
+    setRunnerSubagents(false)
     setErrorText(null)
     if (readingStreamRef.current && streamSessionRef.current === id) {
       const cached = cacheRef.current.get(id)
@@ -1233,6 +1242,13 @@ export default function App() {
             >
               轨迹
             </button>
+            <button
+              type="button"
+              className={viewMode === "chain" ? "view-tab is-active" : "view-tab"}
+              onClick={() => setViewMode("chain")}
+            >
+              运行链
+            </button>
           </div>
         ) : null}
         {errorText ? (
@@ -1246,7 +1262,9 @@ export default function App() {
         ) : (
           <>
             <div className="transcript-wrap">
-            {viewMode === "trace" ? (
+            {viewMode === "chain" ? (
+              <ChainView chain={runnerChain} subagents={runnerSubagents} />
+            ) : viewMode === "trace" ? (
               <TraceView messages={messages} live={showLive ? live : null} />
             ) : (
             <div className="transcript" ref={transcriptRef}>
