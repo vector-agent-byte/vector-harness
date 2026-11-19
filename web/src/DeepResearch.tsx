@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react"
 import type { FormEvent, KeyboardEvent } from "react"
 import { normalizeMessages, readError, readEventStream } from "./api.ts"
 import { Markdown } from "./components.tsx"
+import { formatRelativeTime } from "./format.ts"
 import {
   extractResearchTasks,
   extractResearchTasksFromDelegates,
@@ -24,7 +25,21 @@ type ResearchSession = {
   eventCount: number
 }
 
-const RESEARCH_SESSION_KEY = "vh-research-open"
+const RESEARCH_IDS_KEY = "vh-research-ids"
+const RESEARCH_OPEN_KEY = "vh-research-open"
+const RESEARCH_META_KEY = "vh-research-meta"
+
+type ResearchMeta = { topic: string; updated_at: number }
+
+function loadMeta(): Record<string, ResearchMeta> {
+  try { return JSON.parse(localStorage.getItem(RESEARCH_META_KEY) ?? "{}") as Record<string, ResearchMeta> }
+  catch { return {} }
+}
+function saveMeta(id: string, meta: ResearchMeta) {
+  const all = loadMeta()
+  all[id] = meta
+  localStorage.setItem(RESEARCH_META_KEY, JSON.stringify(all))
+}
 
 function buildResearchPrompt(topic: string, engine: string): string {
   return `请对以下主题进行深度研究：
@@ -49,20 +64,33 @@ export default function DeepResearch() {
   const [engine, setEngine] = useState<"advanced" | "standard">("advanced")
   const [running, setRunning] = useState(false)
   const [selectedTaskIndex, setSelectedTaskIndex] = useState<number | null>(null)
-  const [flowCollapsed, setFlowCollapsed] = useState(false)
   const [errorText, setErrorText] = useState<string | null>(null)
   const [copied, setCopied] = useState(false)
   const [liveTasks, setLiveTasks] = useState<ResearchTask[]>([])
   const [logOpen, setLogOpen] = useState(false)
+  const [queriesOpen, setQueriesOpen] = useState(false)
+  const [followUpDraft, setFollowUpDraft] = useState("")
+  const [instructionOpen, setInstructionOpen] = useState(false)
+  const [copiedInstruction, setCopiedInstruction] = useState(false)
+  const [, setNow] = useState(() => Date.now())
 
   const openIdRef = useRef<string | null>(null)
   const runningRef = useRef(false)
 
   const openSession = sessions.find((s) => s.id === openId) ?? null
+  const sessionDone = openSession?.status === "complete"
   // Prefer update_todos tasks (plan mode), fall back to delegate children (subagents mode)
   const todoTasks = openSession ? extractResearchTasks(openSession.messages) : []
   const delegateTasks = openSession ? extractResearchTasksFromDelegates(openSession.messages) : []
-  const baseTasks = todoTasks.length > 0 ? todoTasks : delegateTasks
+  const rawBaseTasks = todoTasks.length > 0 ? todoTasks : delegateTasks
+  // If session is complete, any task still "in_progress" or "pending" must actually be done
+  const baseTasks = sessionDone
+    ? rawBaseTasks.map((t) =>
+        t.status === "in_progress" || t.status === "pending"
+          ? { ...t, status: "completed" as ResearchTaskStatus }
+          : t
+      )
+    : rawBaseTasks
   const tasks = running && liveTasks.length > 0 ? liveTasks : baseTasks
   const progress = getResearchProgress(tasks)
   const isRunning = openSession?.status === "running"
@@ -88,22 +116,135 @@ export default function DeepResearch() {
     }
   }, [])
 
+  // Load all saved research sessions from localStorage on mount
   useEffect(() => {
-    const saved = sessionStorage.getItem(RESEARCH_SESSION_KEY)
-    if (!saved) return
+    const savedIds = JSON.parse(localStorage.getItem(RESEARCH_IDS_KEY) ?? "[]") as string[]
+    const savedOpen = localStorage.getItem(RESEARCH_OPEN_KEY)
+    if (savedIds.length === 0) return
     void (async () => {
-      const msgs = await loadSession(saved)
-      if (!msgs) return
-      const topic = extractResearchTopic(msgs)
-      setSessions([{ id: saved, topic, messages: msgs, status: "complete", updated_at: Date.now(), eventCount: msgs.length }])
-      setOpenId(saved)
-      openIdRef.current = saved
+      const meta = loadMeta()
+      const loaded: ResearchSession[] = []
+      for (const id of savedIds) {
+        const msgs = await loadSession(id)
+        if (!msgs) continue
+        const topic = meta[id]?.topic || extractResearchTopic(msgs)
+        const updated_at = meta[id]?.updated_at ?? Date.now()
+        loaded.push({ id, topic, messages: msgs, status: "complete", updated_at, eventCount: msgs.length })
+      }
+      if (loaded.length === 0) return
+      setSessions(loaded)
+      const openTarget = savedOpen && loaded.find((s) => s.id === savedOpen) ? savedOpen : loaded[0].id
+      setOpenId(openTarget)
+      openIdRef.current = openTarget
     })()
   }, [loadSession])
 
+  // Persist session ID list whenever sessions change
   useEffect(() => {
-    if (openId) sessionStorage.setItem(RESEARCH_SESSION_KEY, openId)
+    const ids = sessions.map((s) => s.id)
+    if (ids.length > 0) localStorage.setItem(RESEARCH_IDS_KEY, JSON.stringify(ids))
+  }, [sessions])
+
+  // Persist currently open session ID
+  useEffect(() => {
+    if (openId) localStorage.setItem(RESEARCH_OPEN_KEY, openId)
   }, [openId])
+
+  // Update relative timestamps every minute
+  useEffect(() => {
+    const timer = window.setInterval(() => setNow(Date.now()), 60000)
+    return () => window.clearInterval(timer)
+  }, [])
+
+  async function runSessionStream(id: string, msgRes: Response) {
+    const pollTimer = setInterval(async () => {
+      if (!runningRef.current) return
+      const msgs = await loadSession(id)
+      if (msgs) {
+        setSessions((prev) => prev.map((s) => s.id === id ? { ...s, messages: msgs } : s))
+      }
+    }, 2000)
+
+    await readEventStream(msgRes, (event: StreamEvent) => {
+      setSessions((prev) =>
+        prev.map((s) => s.id === id ? { ...s, eventCount: s.eventCount + 1 } : s)
+      )
+      const isChild = event.origin === "child"
+      if (
+        !isChild &&
+        event.kind === "tool_call_end" &&
+        event.name === "update_todos" &&
+        event.arguments &&
+        typeof event.arguments === "object" &&
+        Array.isArray((event.arguments as Record<string, unknown>).todos)
+      ) {
+        const rawTodos = (event.arguments as { todos: Array<{ id?: string; content: string; status: string }> }).todos
+        setLiveTasks(rawTodos.map((todo, i) => {
+          const { title, description } = splitTaskContent(todo.content)
+          return { id: todo.id ?? `task-${i}`, index: i, title, description, status: todo.status as ResearchTaskStatus }
+        }))
+      } else if (
+        !isChild &&
+        event.kind === "tool_call_end" &&
+        event.name === "delegate" &&
+        event.arguments &&
+        typeof event.arguments === "object"
+      ) {
+        const args = event.arguments as Record<string, unknown>
+        const taskText = typeof args.task === "string" ? args.task : ""
+        const tid = typeof event.tool_call_id === "string" && event.tool_call_id ? event.tool_call_id : `d-${Date.now()}`
+        if (taskText) {
+          const { title, description } = splitTaskContent(taskText)
+          setLiveTasks((prev) => {
+            if (prev.find((t) => t.id === tid)) return prev
+            return [...prev, { id: tid, index: prev.length, title, description, status: "pending" }]
+          })
+        }
+      } else if (
+        !isChild &&
+        event.kind === "tool_execution_start" &&
+        event.name === "delegate"
+      ) {
+        const tid = typeof event.tool_call_id === "string" && event.tool_call_id ? event.tool_call_id : ""
+        if (tid) {
+          setLiveTasks((prev) => prev.map((t) => t.id === tid ? { ...t, status: "in_progress" as ResearchTaskStatus } : t))
+        }
+      } else if (!isChild && event.kind === "tool_result") {
+        const tid = typeof event.tool_call_id === "string" && event.tool_call_id ? event.tool_call_id : ""
+        const isErr = event.name === "error"
+        if (tid) {
+          setLiveTasks((prev) =>
+            prev.map((t) =>
+              t.id === tid ? { ...t, status: (isErr ? "error" : "completed") as ResearchTaskStatus } : t
+            )
+          )
+        }
+      }
+    })
+
+    clearInterval(pollTimer)
+    setLiveTasks([])
+
+    const completedAt = Date.now()
+    const msgs = await loadSession(id)
+    if (msgs) {
+      setSessions((prev) =>
+        prev.map((s) =>
+          s.id === id
+            ? { ...s, messages: msgs, status: "complete", eventCount: msgs.length, updated_at: completedAt }
+            : s
+        )
+      )
+    } else {
+      setSessions((prev) => prev.map((s) => s.id === id ? { ...s, status: "complete", updated_at: completedAt } : s))
+    }
+    // Persist the completion time so it survives page reload
+    setSessions((prev) => {
+      const s = prev.find(x => x.id === id)
+      if (s) saveMeta(id, { topic: s.topic, updated_at: completedAt })
+      return prev
+    })
+  }
 
   async function startResearch() {
     if (running || !topicDraft.trim()) return
@@ -133,6 +274,7 @@ export default function DeepResearch() {
         updated_at: Date.now(),
         eventCount: 0,
       }
+      saveMeta(id, { topic: topicDraft.trim(), updated_at: Date.now() })
       setSessions((prev) => [newSession, ...prev])
       setOpenId(id)
       openIdRef.current = id
@@ -151,95 +293,59 @@ export default function DeepResearch() {
         return
       }
 
-      // Poll session messages every 2 s while streaming so tasks appear in real-time
-      const pollTimer = setInterval(async () => {
-        if (!runningRef.current) return
-        const msgs = await loadSession(id)
-        if (msgs) {
-          setSessions((prev) => prev.map((s) => s.id === id ? { ...s, messages: msgs } : s))
-        }
-      }, 2000)
-
-      await readEventStream(msgRes, (event: StreamEvent) => {
-        setSessions((prev) =>
-          prev.map((s) => s.id === id ? { ...s, eventCount: s.eventCount + 1 } : s)
-        )
-        const isChild = event.origin === "child"
-        if (
-          !isChild &&
-          event.kind === "tool_call_end" &&
-          event.name === "update_todos" &&
-          event.arguments &&
-          typeof event.arguments === "object" &&
-          Array.isArray((event.arguments as Record<string, unknown>).todos)
-        ) {
-          // plan mode: update_todos keeps the full list
-          const rawTodos = (event.arguments as { todos: Array<{ id?: string; content: string; status: string }> }).todos
-          setLiveTasks(rawTodos.map((todo, i) => {
-            const { title, description } = splitTaskContent(todo.content)
-            return { id: todo.id ?? `task-${i}`, index: i, title, description, status: todo.status as ResearchTaskStatus }
-          }))
-        } else if (
-          !isChild &&
-          event.kind === "tool_call_end" &&
-          event.name === "delegate" &&
-          event.arguments &&
-          typeof event.arguments === "object"
-        ) {
-          // subagents mode: each delegate call = one task (initially queued)
-          const args = event.arguments as Record<string, unknown>
-          const taskText = typeof args.task === "string" ? args.task : ""
-          const tid = typeof event.tool_call_id === "string" && event.tool_call_id ? event.tool_call_id : `d-${Date.now()}`
-          if (taskText) {
-            const { title, description } = splitTaskContent(taskText)
-            setLiveTasks((prev) => {
-              if (prev.find((t) => t.id === tid)) return prev
-              return [...prev, { id: tid, index: prev.length, title, description, status: "pending" }]
-            })
-          }
-        } else if (
-          !isChild &&
-          event.kind === "tool_execution_start" &&
-          event.name === "delegate"
-        ) {
-          // delegate execution has begun → mark as in_progress
-          const tid = typeof event.tool_call_id === "string" && event.tool_call_id ? event.tool_call_id : ""
-          if (tid) {
-            setLiveTasks((prev) => prev.map((t) => t.id === tid ? { ...t, status: "in_progress" as ResearchTaskStatus } : t))
-          }
-        } else if (!isChild && event.kind === "tool_result") {
-          // delegate result received → mark as completed (or error)
-          const tid = typeof event.tool_call_id === "string" && event.tool_call_id ? event.tool_call_id : ""
-          const isErr = event.name === "error"
-          if (tid) {
-            setLiveTasks((prev) =>
-              prev.map((t) =>
-                t.id === tid ? { ...t, status: (isErr ? "error" : "completed") as ResearchTaskStatus } : t
-              )
-            )
-          }
-        }
-      })
-
-      clearInterval(pollTimer)
-      setLiveTasks([])
-
-      const msgs = await loadSession(id)
-      if (msgs) {
-        setSessions((prev) =>
-          prev.map((s) =>
-            s.id === id
-              ? { ...s, messages: msgs, status: "complete", eventCount: msgs.length }
-              : s
-          )
-        )
-      } else {
-        setSessions((prev) => prev.map((s) => s.id === id ? { ...s, status: "complete" } : s))
-      }
+      await runSessionStream(id, msgRes)
     } catch (e) {
       setErrorText(String(e))
       setSessions((prev) =>
         prev.map((s) => s.id === openIdRef.current ? { ...s, status: "error" } : s)
+      )
+    } finally {
+      setRunning(false)
+      runningRef.current = false
+    }
+  }
+
+  async function stopResearch() {
+    const id = openIdRef.current
+    if (!id) return
+    try {
+      await fetch(`/api/sessions/${encodeURIComponent(id)}/stop`, { method: "POST" })
+    } catch {
+      // ignore
+    }
+  }
+
+  async function sendFollowUp() {
+    const text = followUpDraft.trim()
+    if (!text || running) return
+    const id = openIdRef.current
+    if (!id) return
+
+    setRunning(true)
+    runningRef.current = true
+    setFollowUpDraft("")
+    setErrorText(null)
+    setSessions((prev) => prev.map((s) => s.id === id ? { ...s, status: "running" } : s))
+
+    try {
+      const msgRes = await fetch(`/api/sessions/${encodeURIComponent(id)}/messages`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ text }),
+      })
+
+      if (!msgRes.ok) {
+        const code = await readError(msgRes)
+        setErrorText(code)
+        setSessions((prev) => prev.map((s) => s.id === id ? { ...s, status: "error" } : s))
+        return
+      }
+
+      await runSessionStream(id, msgRes)
+    } catch (e) {
+      setErrorText(String(e))
+      setSessions((prev) =>
+        prev.map((s) => s.id === id ? { ...s, status: "error" } : s)
       )
     } finally {
       setRunning(false)
@@ -259,6 +365,15 @@ export default function DeepResearch() {
     void startResearch()
   }
 
+  function switchSession(id: string) {
+    setOpenId(id)
+    openIdRef.current = id
+    setSelectedTaskIndex(null)
+    setLiveTasks([])
+    setLogOpen(false)
+    setInstructionOpen(false)
+  }
+
   function copyPath(path: string) {
     void navigator.clipboard.writeText(path).then(() => {
       setCopied(true)
@@ -267,12 +382,12 @@ export default function DeepResearch() {
   }
 
   const statusLabel = isRunning
-    ? "● 研究进行中"
+    ? "研究进行中"
     : openSession?.status === "complete"
-      ? "● 研究流程完成"
+      ? "研究完成"
       : openSession?.status === "error"
-        ? "● 研究出错"
-        : "○ 等待开始"
+        ? "研究出错"
+        : "等待开始"
 
   const statusClass = isRunning
     ? "research-status-running"
@@ -289,7 +404,7 @@ export default function DeepResearch() {
         <div className="research-left-header">
           <div className="research-title">
             <span className="research-title-icon">🔍</span>
-            深度研究助手
+            深度研究
           </div>
         </div>
 
@@ -321,7 +436,7 @@ export default function DeepResearch() {
               <label className="research-field-label">研究进度</label>
               <div className="research-progress-wrap">
                 <div
-                  className="research-progress-bar"
+                  className={`research-progress-bar${sessionDone ? " is-done" : ""}`}
                   style={{ width: progress.total > 0 ? `${(progress.done / progress.total) * 100}%` : "0%" }}
                 />
               </div>
@@ -331,36 +446,45 @@ export default function DeepResearch() {
             </>
           )}
 
-          <button
-            type="submit"
-            className="research-start-btn"
-            disabled={running || !topicDraft.trim()}
-          >
-            {running ? "研究中…" : "+ 开始新研究"}
-          </button>
+          {running ? (
+            <button
+              type="button"
+              className="research-stop-btn"
+              onClick={() => void stopResearch()}
+            >
+              ■ 停止研究
+            </button>
+          ) : (
+            <button
+              type="submit"
+              className="research-start-btn"
+              disabled={!topicDraft.trim()}
+            >
+              + 开始新研究
+            </button>
+          )}
         </form>
 
         {errorText && (
           <div className="research-error">{errorText}</div>
         )}
 
-        {openSession && tasks.length > 0 && (
-          <div className="research-task-sidebar">
-            <div className="research-task-sidebar-label">任务列表</div>
-            <ul className="research-task-sidebar-list">
-              {tasks.map((task, i) => (
-                <li
-                  key={task.id}
-                  className={`research-task-sidebar-item ${task.status} ${selectedTaskIndex === i ? "is-selected" : ""}`}
-                  onClick={() => setSelectedTaskIndex(i)}
-                >
-                  <span className="research-task-sidebar-title">{task.title || `任务 ${i + 1}`}</span>
-                  <span className={`research-task-badge ${task.status}`}>
-                    {task.status === "completed" ? "已完成" :
-                     task.status === "skipped" ? "已跳过" :
-                     task.status === "in_progress" ? "进行中" :
-                     task.status === "error" ? "出错" : "待执行"}
-                  </span>
+        {sessions.length > 0 && (
+          <div className="research-history">
+            <div className="research-history-label">历史研究</div>
+            <ul className="research-history-list">
+              {sessions.map((s) => (
+                <li key={s.id}>
+                  <button
+                    type="button"
+                    className={`research-history-item ${s.id === openId ? "is-open" : ""}`}
+                    onClick={() => switchSession(s.id)}
+                  >
+                    <span className="research-history-topic">{s.topic || "无标题研究"}</span>
+                    <span className={`research-history-status ${s.status}`}>
+                      {s.status === "running" ? "运行中" : formatRelativeTime(s.updated_at / 1000)}
+                    </span>
+                  </button>
                 </li>
               ))}
             </ul>
@@ -372,28 +496,52 @@ export default function DeepResearch() {
       <div className="research-main">
         {/* Top status bar */}
         {openSession && (
-          <div className="research-topbar">
-            <span className={`research-status-label ${statusClass}`}>{statusLabel}</span>
-            <span className="research-topbar-sep" />
-            <span className="research-topbar-info">任务进度：{progress.done} / {progress.total}</span>
-            <span className="research-topbar-sep" />
-            <button
-              type="button"
-              className={logOpen ? "research-log-btn is-active" : "research-log-btn"}
-              onClick={() => setLogOpen((v) => !v)}
-            >
-              阶段记录 {totalEvents} 条
-            </button>
-            <div className="research-topbar-right">
+          <>
+            <div className="research-heading">
+              <h2 className="research-heading-title" title={openSession.topic}>
+                {openSession.topic || "深度研究"}
+              </h2>
+              {openSession.topic.length > 40 && (
+                <button
+                  type="button"
+                  className="research-instruction-toggle"
+                  onClick={() => setInstructionOpen((v) => !v)}
+                >
+                  {instructionOpen ? "收起指令 ▲" : "查看完整指令 ▼"}
+                </button>
+              )}
+              {instructionOpen && (
+                <div className="research-instruction-body">
+                  <pre className="research-instruction-text">{openSession.topic}</pre>
+                  <button
+                    type="button"
+                    className="research-instruction-copy"
+                    onClick={() => {
+                      void navigator.clipboard.writeText(openSession.topic).then(() => {
+                        setCopiedInstruction(true)
+                        setTimeout(() => setCopiedInstruction(false), 1500)
+                      })
+                    }}
+                  >
+                    {copiedInstruction ? "✓ 已复制" : "复制全文"}
+                  </button>
+                </div>
+              )}
+            </div>
+            <div className="research-topbar">
+              <span className={`research-status-label ${statusClass}`}>{statusLabel}</span>
+              <span className="research-topbar-sep" />
+              <span className="research-topbar-info">任务进度：{progress.done} / {progress.total}</span>
+              <span className="research-topbar-sep" />
               <button
                 type="button"
-                className="research-collapse-btn"
-                onClick={() => setFlowCollapsed((v) => !v)}
+                className={logOpen ? "research-log-btn is-active" : "research-log-btn"}
+                onClick={() => setLogOpen((v) => !v)}
               >
-                {flowCollapsed ? "展开流程" : "收起流程"}
+                阶段记录 {totalEvents} 条
               </button>
             </div>
-          </div>
+          </>
         )}
 
         {!openSession ? (
@@ -407,18 +555,17 @@ export default function DeepResearch() {
             {/* Center: task cards */}
             <div className="research-center">
               <div className="research-center-label">任务清单</div>
-              {!flowCollapsed && tasks.length === 0 && (
+              {tasks.length === 0 && (
                 <div className="research-no-tasks">
                   {isRunning ? "正在规划研究任务…" : "暂无任务数据"}
                 </div>
               )}
-              {!flowCollapsed && (
-                <div className="research-task-cards">
+              <div className="research-task-cards">
                   {tasks.map((task, i) => (
                     <div
                       key={task.id}
                       className={`research-task-card ${task.status} ${selectedTaskIndex === i ? "is-selected" : ""}`}
-                      onClick={() => setSelectedTaskIndex(selectedTaskIndex === i ? null : i)}
+                      onClick={() => { setSelectedTaskIndex(selectedTaskIndex === i ? null : i); setQueriesOpen(false) }}
                     >
                       <div className="research-task-card-header">
                         <span className="research-task-card-title">{task.title || `任务 ${i + 1}`}</span>
@@ -434,8 +581,7 @@ export default function DeepResearch() {
                       )}
                     </div>
                   ))}
-                </div>
-              )}
+              </div>
             </div>
 
             {/* Right: task detail */}
@@ -447,14 +593,32 @@ export default function DeepResearch() {
                     <div className="research-detail-desc">{selectedTask.description}</div>
                   )}
 
-                  {taskDetail.queries.length > 0 && (
-                    <div className="research-detail-section">
-                      <div className="research-detail-section-label">查询</div>
-                      <div className="research-detail-queries">
-                        {taskDetail.queries.map((q, i) => (
-                          <span key={i} className="research-query-tag">{q.length > 120 ? q.slice(0, 120) + "…" : q}</span>
-                        ))}
+                  {taskDetail.summary && (
+                    <div className="research-detail-section research-summary-section">
+                      <div className="research-detail-section-label">任务总结</div>
+                      <div className="research-summary-body">
+                        <Markdown text={taskDetail.summary} />
                       </div>
+                    </div>
+                  )}
+
+                  {taskDetail.sources.length > 0 && (
+                    <div className="research-detail-section">
+                      <div className="research-detail-section-label">最新来源</div>
+                      <ul className="research-sources-list">
+                        {taskDetail.sources.map((src, i) => (
+                          <li key={i}>
+                            <a
+                              className="research-source-link"
+                              href={src.url}
+                              target="_blank"
+                              rel="noreferrer"
+                            >
+                              {src.title} ↗
+                            </a>
+                          </li>
+                        ))}
+                      </ul>
                     </div>
                   )}
 
@@ -481,32 +645,24 @@ export default function DeepResearch() {
                     </div>
                   )}
 
-                  {taskDetail.sources.length > 0 && (
+                  {taskDetail.queries.length > 0 && (
                     <div className="research-detail-section">
-                      <div className="research-detail-section-label">最新来源</div>
-                      <ul className="research-sources-list">
-                        {taskDetail.sources.map((src, i) => (
-                          <li key={i}>
-                            <a
-                              className="research-source-link"
-                              href={src.url}
-                              target="_blank"
-                              rel="noreferrer"
-                            >
-                              {src.title} ↗
-                            </a>
-                          </li>
-                        ))}
-                      </ul>
-                    </div>
-                  )}
-
-                  {taskDetail.summary && (
-                    <div className="research-detail-section research-summary-section">
-                      <div className="research-detail-section-label">任务总结</div>
-                      <div className="research-summary-body">
-                        <Markdown text={taskDetail.summary} />
-                      </div>
+                      <button
+                        type="button"
+                        className="research-detail-section-label research-queries-toggle"
+                        onClick={() => setQueriesOpen((v) => !v)}
+                      >
+                        查询命令
+                        <span className="research-queries-toggle-arrow">{queriesOpen ? "▲" : "▼"}</span>
+                        <span className="research-queries-count">{taskDetail.queries.length} 条</span>
+                      </button>
+                      {queriesOpen && (
+                        <div className="research-detail-queries">
+                          {taskDetail.queries.map((q, i) => (
+                            <span key={i} className="research-query-tag">{q.length > 120 ? q.slice(0, 120) + "…" : q}</span>
+                          ))}
+                        </div>
+                      )}
                     </div>
                   )}
 
@@ -524,6 +680,44 @@ export default function DeepResearch() {
               )}
             </div>
           </div>
+        )}
+
+        {/* Follow-up composer */}
+        {openSession && (
+          <form
+            className="research-composer"
+            onSubmit={(e) => { e.preventDefault(); void sendFollowUp() }}
+          >
+            <textarea
+              className="research-followup-input"
+              placeholder={isRunning ? "研究进行中，请稍候…" : "继续提问或补充研究方向，回车发送…"}
+              value={followUpDraft}
+              disabled={isRunning}
+              rows={2}
+              onChange={(e) => setFollowUpDraft(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
+                  e.preventDefault()
+                  void sendFollowUp()
+                }
+              }}
+            />
+            <div className="research-composer-actions">
+              {isRunning ? (
+                <button type="button" className="research-composer-stop" onClick={() => void stopResearch()}>
+                  ■ 停止
+                </button>
+              ) : (
+                <button
+                  type="submit"
+                  className="research-composer-send"
+                  disabled={!followUpDraft.trim()}
+                >
+                  发送
+                </button>
+              )}
+            </div>
+          </form>
         )}
       </div>
 

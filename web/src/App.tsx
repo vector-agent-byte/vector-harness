@@ -1182,17 +1182,11 @@ export default function App() {
           <button
             type="button"
             className={appView === "agent" ? "activity-item is-active" : "activity-item"}
-            title="Agent"
-            aria-label="Agent"
+            title="智能体"
+            aria-label="智能体"
             onClick={() => setAppView("agent")}
           >
-            {/* Chat/agent icon */}
-            <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-              <path d="M17 10c0 3.866-3.134 7-7 7a6.97 6.97 0 0 1-3.5-.938L3 17l.938-3.5A6.97 6.97 0 0 1 3 10c0-3.866 3.134-7 7-7s7 3.134 7 7z"/>
-              <circle cx="7.5" cy="10" r=".75" fill="currentColor" stroke="none"/>
-              <circle cx="10" cy="10" r=".75" fill="currentColor" stroke="none"/>
-              <circle cx="12.5" cy="10" r=".75" fill="currentColor" stroke="none"/>
-            </svg>
+            智能体
           </button>
           <button
             type="button"
@@ -1201,12 +1195,7 @@ export default function App() {
             aria-label="深度研究"
             onClick={() => setAppView("deepresearch")}
           >
-            {/* Research/search icon */}
-            <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-              <circle cx="8.5" cy="8.5" r="5"/>
-              <path d="m13 13 3.5 3.5"/>
-              <path d="M6.5 8.5h4M8.5 6.5v4" strokeWidth="1.3"/>
-            </svg>
+            深度研究
           </button>
         </nav>
       </div>
@@ -1216,7 +1205,16 @@ export default function App() {
       ) : (
       <>
       <aside className="sidebar" style={{ width: sidebarWidth }}>
-        <div className="brand">Vector Harness</div>
+        <div className="brand">
+          <svg className="brand-icon" aria-hidden="true" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+            <rect x="3" y="7" width="14" height="10" rx="2" />
+            <path d="M7 7V5a3 3 0 0 1 6 0v2" />
+            <circle cx="7.5" cy="12" r="1" fill="currentColor" stroke="none" />
+            <circle cx="12.5" cy="12" r="1" fill="currentColor" stroke="none" />
+            <path d="M10 2v2" />
+          </svg>
+          智能体
+        </div>
         <button type="button" className="new-session" onClick={() => void createSession()}>
           <svg className="new-session-icon" aria-hidden="true" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
             <circle cx="8" cy="8" r="6.5" />
