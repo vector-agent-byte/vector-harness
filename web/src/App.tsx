@@ -1191,11 +1191,11 @@ export default function App() {
           <button
             type="button"
             className={appView === "deepresearch" ? "activity-item is-active" : "activity-item"}
-            title="深度研究"
-            aria-label="深度研究"
+            title="深度调研"
+            aria-label="深度调研"
             onClick={() => setAppView("deepresearch")}
           >
-            深度研究
+            深度调研
           </button>
         </nav>
       </div>

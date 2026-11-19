@@ -42,19 +42,19 @@ function saveMeta(id: string, meta: ResearchMeta) {
 }
 
 function buildResearchPrompt(topic: string, engine: string): string {
-  return `请对以下主题进行深度研究：
+  return `请对以下主题进行深度调研：
 
 主题：${topic}
 
 搜索引擎偏好：${engine === "advanced" ? "高级搜索，优先学术和权威来源" : "标准搜索"}
 
-请将研究分解为5个子任务，每个子任务聚焦一个具体研究方向。
+请根据主题的复杂度，将研究分解为若干个子任务（简单主题2-3个，复杂主题4-6个），每个子任务聚焦一个具体研究方向，子任务之间不重叠。
 对每个子任务，请：
-1. 通过搜索获取最新信息
-2. 整理关键发现和数据来源
+1. 通过搜索获取最新信息，记录实际检索词和来源URL
+2. 核实2-4个可靠来源，注明发布日期
 3. 形成该方向的简要总结，以笔记形式保存
 
-完成所有子任务后，汇总形成完整研究报告。`
+完成所有子任务后，汇总各方向发现，形成结构化研究报告，包含核心结论与参考来源。`
 }
 
 export default function DeepResearch() {
@@ -182,7 +182,7 @@ export default function DeepResearch() {
       }
     }, 2000)
 
-    await readEventStream(msgRes, (event: StreamEvent) => {
+    const { completed, status: runStatus } = await readEventStream(msgRes, (event: StreamEvent) => {
       setSessions((prev) =>
         prev.map((s) => s.id === id ? { ...s, eventCount: s.eventCount + 1 } : s)
       )
@@ -240,22 +240,40 @@ export default function DeepResearch() {
     })
 
     clearInterval(pollTimer)
+
+    // If stream ended without run_result, the backend session may still be running.
+    // Poll until the session is no longer in running_id.
+    if (!completed) {
+      for (let i = 0; i < 60; i++) {
+        await new Promise<void>((r) => setTimeout(r, 3000))
+        if (!runningRef.current) break
+        try {
+          const listRes = await fetch("/api/sessions", { cache: "no-store" })
+          if (listRes.ok) {
+            const data = (await listRes.json()) as { running_id?: string | null }
+            if (data.running_id !== id) break
+          }
+        } catch { break }
+      }
+    }
+
     setLiveTasks([])
 
+    const finalStatus: ResearchSessionStatus =
+      runStatus === "error" ? "error" : "complete"
     const completedAt = Date.now()
     const msgs = await loadSession(id)
     if (msgs) {
       setSessions((prev) =>
         prev.map((s) =>
           s.id === id
-            ? { ...s, messages: msgs, status: "complete", eventCount: msgs.length, updated_at: completedAt }
+            ? { ...s, messages: msgs, status: finalStatus, eventCount: msgs.length, updated_at: completedAt }
             : s
         )
       )
     } else {
-      setSessions((prev) => prev.map((s) => s.id === id ? { ...s, status: "complete", updated_at: completedAt } : s))
+      setSessions((prev) => prev.map((s) => s.id === id ? { ...s, status: finalStatus, updated_at: completedAt } : s))
     }
-    // Persist the completion time so it survives page reload
     setSessions((prev) => {
       const s = prev.find(x => x.id === id)
       if (s) saveMeta(id, { topic: s.topic, updated_at: completedAt })
@@ -421,7 +439,7 @@ export default function DeepResearch() {
         <div className="research-left-header">
           <div className="research-title">
             <span className="research-title-icon">🔍</span>
-            深度研究
+            深度调研
           </div>
         </div>
 
@@ -515,18 +533,22 @@ export default function DeepResearch() {
         {openSession && (
           <>
             <div className="research-heading">
-              <h2 className="research-heading-title" title={openSession.topic}>
-                {openSession.topic || "深度研究"}
-              </h2>
-              {openSession.topic.length > 40 && (
-                <button
-                  type="button"
-                  className="research-instruction-toggle"
-                  onClick={() => setInstructionOpen((v) => !v)}
-                >
-                  {instructionOpen ? "收起指令 ▲" : "查看完整指令 ▼"}
-                </button>
-              )}
+              <div className="research-heading-row">
+                <span className="research-heading-label">研究主题</span>
+                <span className="research-heading-title" title={openSession.topic}>
+                  {(openSession.topic.split("\n")[0] || "深度调研").slice(0, 80)}
+                  {openSession.topic.replace(/\n.*/s, "").length > 80 ? "…" : ""}
+                </span>
+                {openSession.topic.length > 40 && (
+                  <button
+                    type="button"
+                    className="research-instruction-toggle"
+                    onClick={() => setInstructionOpen((v) => !v)}
+                  >
+                    {instructionOpen ? "▲" : "▼"}
+                  </button>
+                )}
+              </div>
               {instructionOpen && (
                 <div className="research-instruction-body">
                   <pre className="research-instruction-text">{openSession.topic}</pre>
@@ -564,7 +586,7 @@ export default function DeepResearch() {
         {!openSession ? (
           <div className="research-empty">
             <div className="research-empty-icon">🔍</div>
-            <div className="research-empty-title">开始深度研究</div>
+            <div className="research-empty-title">开始深度调研</div>
             <div className="research-empty-hint">在左侧输入研究主题，然后点击"开始新研究"</div>
           </div>
         ) : (
