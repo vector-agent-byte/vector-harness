@@ -47,7 +47,7 @@ from vector_harness.web_sessions import (
     delete_session,
     is_session_id,
     list_sessions,
-    read_messages,
+    read_session_view,
     session_path,
     session_mode,
     session_run,
@@ -338,7 +338,7 @@ def _handle_read_session(app: WebServer, handler, variables: list[str]) -> None:
         return
     workspace = app.settings.workspace
     try:
-        messages = read_messages(workspace, session_id)
+        view = read_session_view(workspace, session_id)
     except FileNotFoundError:
         send_error(handler, 404, "not_found")
         return
@@ -348,7 +348,8 @@ def _handle_read_session(app: WebServer, handler, variables: list[str]) -> None:
         200,
         {
             "id": session_id,
-            "messages": messages,
+            "messages": view["messages"],
+            "warnings": view["warnings"],
             "skill": session_skill(workspace, session_id),
             "skills": session_skills(workspace, session_id),
             "mode": session_mode(workspace, session_id) or "react",

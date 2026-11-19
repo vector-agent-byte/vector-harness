@@ -5,8 +5,12 @@
 """
 from __future__ import annotations
 
+import json
+
 from vector_harness.core.loop import Loop
-from vector_harness.types import RunResult
+from vector_harness.core.session import Session
+from vector_harness.patterns.task_state import TaskContext, TaskState, normalize_todos, render_todos
+from vector_harness.types import Message, RunResult, ToolCall
 
 VALID_STATUS = {"pending", "in_progress", "completed"}
 STATUS_ICON = {"pending": "[ ]", "in_progress": "[~]", "completed": "[✓]"}
@@ -24,12 +28,7 @@ _CONTINUE_PROMPT = (
 
 
 def _render(todos: list[dict]) -> str:
-    if not todos:
-        return "(当前无待办事项)"
-    return "\n".join(
-        f"  {STATUS_ICON.get(t.get('status', 'pending'), '[?]')} {t['id']}. {t.get('content', '')}"
-        for t in todos
-    )
+    return render_todos(todos)
 
 
 class UpdateTodosTool:
@@ -63,48 +62,42 @@ class UpdateTodosTool:
         "required": ["todos"],
     }
 
-    def __init__(self) -> None:
-        self.todos: list[dict] = []
+    def __init__(self, session: Session | None = None) -> None:
+        self.session = session if session is not None else Session.in_memory()
+        self.state = TaskState(self.session)
+        self.updated_this_run = False
+
+    @property
+    def todos(self) -> list[dict]:
+        return self.state.restore()
 
     async def execute(self, arguments: dict) -> str:
-        raw = arguments.get("todos") or []
-        cleaned: list[dict] = []
-        for i, t in enumerate(raw, start=1):
-            content = str(t.get("content") or "").strip()
-            if not content:
-                continue
-            status = t.get("status", "pending")
-            if status not in VALID_STATUS:
-                status = "pending"
-            cleaned.append({"id": t.get("id", i), "content": content, "status": status})
+        todos = normalize_todos(arguments)
+        return json.dumps({"kind": "todo_snapshot", "version": 1, "todos": todos}, ensure_ascii=False)
 
-        in_prog = [t for t in cleaned if t["status"] == "in_progress"]
-        if len(in_prog) > 1:
-            return "Error: 同一时间只能有一个 in_progress 任务，请重新规划。"
+    def after_result_persisted(self, call: ToolCall, result: Message) -> None:
+        if self.state.record(call, result):
+            self.updated_this_run = True
 
-        self.todos = cleaned
-        done = sum(1 for t in self.todos if t["status"] == "completed")
-        pending = sum(1 for t in self.todos if t["status"] == "pending")
-        summary = (
-            f"todos updated: total={len(self.todos)}, "
-            f"completed={done}, in_progress={len(in_prog)}, pending={pending}"
-        )
-        return summary + "\n\n当前列表：\n" + _render(self.todos)
+    def for_session(self, session: Session) -> UpdateTodosTool:
+        return UpdateTodosTool(session)
 
     def unfinished(self) -> list[dict]:
         return [t for t in self.todos if t["status"] != "completed"]
 
     def reset(self) -> None:
-        self.todos = []
+        self.updated_this_run = False
 
 
 class TodoPlan:
     """工具化计划：模型调用 update_todos 维护 todolist，harness 自动推进未完成任务。"""
 
     def __init__(self, loop: Loop) -> None:
-        self._tool = UpdateTodosTool()
+        self._tool = UpdateTodosTool(loop.session)
         loop.replace_tool(self._tool)
         loop.install_prompt(_PLAN_PROMPT)
+        if not any(isinstance(transform, TaskContext) for transform in loop.context_transforms):
+            loop.context_transforms.append(TaskContext(loop.session))
         self.loop = loop
 
     async def run(self, user_text: str) -> RunResult:
@@ -112,7 +105,7 @@ class TodoPlan:
         result = await self.loop.run(user_text)
         total_steps = result.steps
 
-        while result.status == "complete" and self._tool.unfinished():
+        while result.status == "complete" and self._tool.updated_this_run and self._tool.unfinished():
             reminder = _CONTINUE_PROMPT.format(todos=_render(self._tool.unfinished()))
             result = await self.loop.run(reminder)
             total_steps += result.steps

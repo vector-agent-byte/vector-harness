@@ -63,6 +63,7 @@ def build_agent(
         session=session,
         system=DEFAULT_SYSTEM,
         max_steps=max_steps,
+        workdir=workspace,
     )
     return apply_patterns(
         loop,

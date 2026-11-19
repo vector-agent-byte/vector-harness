@@ -5,7 +5,7 @@ import sys
 
 import pytest
 
-from tests.scripted import ScriptedProvider, ScriptedTurn
+from tests.scripted import ScriptedProvider, ScriptedTurn, summary_json
 from vector_harness import Message, Session, ToolCall
 from vector_harness.patterns.compact import Compaction
 
@@ -42,7 +42,7 @@ class RaisingProvider:
 
 def test_compaction_keeps_a_split_tool_group_together() -> None:
     messages = [
-        Message(role="user", content="abcdefghij"),
+        Message(role="user", content="abcdefghij" * 100),
         Message(
             role="assistant",
             content="",
@@ -56,14 +56,14 @@ def test_compaction_keeps_a_split_tool_group_together() -> None:
         Message(role="user", content="stay"),
     ]
     snapshot = [message.content for message in messages]
-    provider = ScriptedProvider(turns=[ScriptedTurn(content="SUM")])
+    provider = ScriptedProvider(turns=[ScriptedTurn(content=summary_json())])
     compaction = Compaction(provider, max_chars=5, keep_last=2)
 
     result = run(compaction.apply(messages))
 
     assert [message.content for message in messages] == snapshot
     assert len(messages) == 5
-    assert result[0].content == "[上下文摘要]\nSUM"
+    assert result[0].content.startswith("[任务摘要 v1]")
     assert [call.id for call in result[1].tool_calls or []] == ["c1", "c2"]
     assert [(message.role, message.tool_call_id) for message in result[1:]] == [
         ("assistant", None),
@@ -96,18 +96,18 @@ def test_compaction_leaves_input_when_keeping_the_group_empties_the_prefix() -> 
 
 def test_compacts_prefix_and_keeps_last_with_empty_tools() -> None:
     messages = [
-        Message(role="user", content="aaaaaaaaaa"),
-        Message(role="user", content="bbbbbbbbbb"),
+        Message(role="user", content="a" * 1000),
+        Message(role="user", content="b" * 1000),
         Message(role="user", content="cccccccccc"),
     ]
-    provider = ScriptedProvider(turns=[ScriptedTurn(content="SHORT")])
+    provider = ScriptedProvider(turns=[ScriptedTurn(content=summary_json())])
     compaction = Compaction(provider, max_chars=25, keep_last=1)
 
     result = run(compaction.apply(messages))
 
     assert len(result) == 2
     assert result[0].role == "user"
-    assert result[0].content == "[上下文摘要]\nSHORT"
+    assert result[0].content.startswith("[任务摘要 v1]")
     assert result[1] is messages[2]
     assert compaction.last_failure is None
     assert len(provider.calls) == 1
@@ -128,7 +128,8 @@ def test_tool_call_arguments_count_toward_max_chars() -> None:
 
     result = run(compaction.apply(messages))
 
-    assert result[0].content.startswith("[上下文摘要]\n")
+    assert result == messages
+    assert compaction.last_failure is not None
     assert result[1] is messages[1]
     assert len(provider.calls) == 1
 
@@ -167,7 +168,7 @@ def test_no_prefix_does_not_call_provider() -> None:
 
     assert result == messages
     assert provider.calls == []
-    assert compaction.last_failure is None
+    assert compaction.last_failure == "no safe prefix available for compaction"
 
 
 def test_summarizer_failure_returns_original_messages(tmp_path) -> None:

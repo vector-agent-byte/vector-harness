@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from collections.abc import Callable
 from contextvars import ContextVar
 from itertools import groupby
@@ -24,6 +25,7 @@ from vector_harness.types import (
 )
 
 current_tool_call_id: ContextVar[str] = ContextVar("current_tool_call_id", default="")
+_logger = logging.getLogger(__name__)
 
 
 def rejection_reason(call: ToolCall, known_names: set[str]) -> str | None:
@@ -103,7 +105,14 @@ class ToolDispatcher:
             self._append_error(call, str(exc))
             self._emit_result(call, str(exc), is_error=True)
         else:
-            self.session.append(Message(role=Role.TOOL, content=output, tool_call_id=call.id))
+            result = Message(role=Role.TOOL, content=output, tool_call_id=call.id)
+            self.session.append(result)
+            callback = getattr(tool, "after_result_persisted", None)
+            if callback is not None:
+                try:
+                    callback(call, result)
+                except Exception:
+                    _logger.warning("Tool result persisted, but derived-state notification failed for %s", call.name)
             self._emit_result(call, output)
         finally:
             current_tool_call_id.reset(token)

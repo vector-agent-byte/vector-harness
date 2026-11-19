@@ -146,8 +146,9 @@ class Tool(Protocol):
 class ContextTransform(Protocol):
     """每次模型请求前可以改写会话消息的钩子。
 
-    只看见会话里的消息，看不见 system。返回的列表和原文序列化结果不同时，
-    循环会整份写回会话。压缩是这个协议的一个实现，定义在模式包里。
+    只看见会话消息的副本，看不见 system；返回值只影响模型输入，不写回原文。
+    可选 on_run_start(user_message_index) 接收本轮首条输入的原始序号。
+    绑定会话的组件可提供 for_session(session)，供子循环创建独立实例。
     """
 
     async def apply(self, messages: list[Message]) -> list[Message]:

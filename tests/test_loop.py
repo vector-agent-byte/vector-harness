@@ -291,7 +291,7 @@ def test_transform_does_not_see_system_and_spares_file_when_content_unchanged(tm
     assert raw.count(b"\n") == 2
 
 
-def test_transform_content_change_triggers_replace_all(tmp_path: Path):
+def test_transform_content_change_does_not_replace_history(tmp_path: Path):
     @dataclass
     class PrefixTool:
         async def apply(self, messages: list[Message]) -> list[Message]:
@@ -310,9 +310,10 @@ def test_transform_content_change_triggers_replace_all(tmp_path: Path):
     result = run(loop.run("hello"))
 
     assert result.status == "complete"
-    assert session.replace_count >= 1
+    assert session.replace_count == 0
     messages = session.load()
-    assert messages[0].content == "[hello]"
+    assert messages[0].content == "hello"
+    assert provider.calls[0]["messages"][0]["content"] == "[hello]"
 
 
 def test_none_arguments_skip_execute_and_produce_error():

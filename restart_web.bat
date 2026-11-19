@@ -21,7 +21,7 @@ if errorlevel 1 goto :fail
 
 echo Starting http://127.0.0.1:8787/ with max-steps=50
 echo Keep this window open. Press Ctrl+C to stop the service.
-"%PYTHON_EXE%" -m vector_harness.web --workspace . --max-steps 50
+"%PYTHON_EXE%" -m vector_harness.web --workspace . --max-steps 50 --compact
 if errorlevel 1 goto :fail
 exit /b 0
 

@@ -10,29 +10,17 @@
 from __future__ import annotations
 
 import json
+import logging
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from vector_harness.core.codec import message_from_dict, message_to_dict
+from vector_harness.core.codec import message_to_dict
+from vector_harness.core.session_io import atomic_write_bytes, repair_partial_tail, scan_session
 from vector_harness.types import Message
 
 
-def _read(path: Path) -> list[Message]:
-    """读完整个文件。文件不存在或是空的，返回空列表。"""
-    messages: list[Message] = []
-    try:
-        text = path.read_text(encoding="utf-8")
-    except FileNotFoundError:
-        return messages
-    if not text.strip():
-        return messages
-    for line in text.splitlines():
-        # 空行不是消息。文件末尾多出来的换行落在这里。
-        if not line.strip():
-            continue
-        messages.append(message_from_dict(json.loads(line)))
-    return messages
+_logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -42,6 +30,9 @@ class Session:
     path: Path | None
     _messages: list[Message] = field(default_factory=list, init=False, repr=False)
     _stamp: tuple[int, int] | None = field(default=None, init=False, repr=False)
+    _derived_state: dict[str, dict] = field(default_factory=dict, init=False, repr=False)
+    _partial_tail: bool = field(default=False, init=False, repr=False)
+    runtime_context: str = field(default="", init=False, repr=False)
 
     @classmethod
     def in_memory(cls) -> Session:
@@ -69,12 +60,18 @@ class Session:
         if self.path is None:
             self._messages.append(message)
             return
+        if self._partial_tail or not self._fresh():
+            self.prepare_for_run()
         current = self._fresh()
         self.path.parent.mkdir(parents=True, exist_ok=True)
-        # 中文原样写入。每条独占一行，中断时最多损坏刚写下的这一行。
         line = json.dumps(message_to_dict(message), ensure_ascii=False)
-        with self.path.open("a", encoding="utf-8") as f:
-            f.write(line + "\n")
+        with self.path.open("ab+") as stream:
+            if stream.tell():
+                stream.seek(-1, 2)
+                if stream.read(1) not in (b"\n", b"\r"):
+                    stream.write(b"\n")
+            stream.write((line + "\n").encode("utf-8"))
+            stream.flush()
         if current:
             self._messages.append(message)
             self._stamp = self._key()
@@ -83,7 +80,7 @@ class Session:
             self._stamp = None
 
     def replace_all(self, messages: list[Message]) -> None:
-        """整份重写。压缩把前缀折成摘要之后用它替换原文。"""
+        """显式重写会话；上下文变换不调用此方法。"""
         if self.path is None:
             self._messages = list(messages)
             return
@@ -93,9 +90,18 @@ class Session:
         # 最后一条也以换行结束，和 append 的行格式一致。这是整份覆盖。
         if lines:
             content += "\n"
-        self.path.write_text(content, encoding="utf-8")
+        atomic_write_bytes(self.path, content.encode("utf-8"))
         self._messages = list(messages)
+        self._partial_tail = False
         self._stamp = self._key()
+
+    def prepare_for_run(self) -> None:
+        if self.path is None:
+            return
+        backup = repair_partial_tail(self.path)
+        if backup is not None:
+            _logger.warning("Recovered incomplete session tail; preserved backup %s", backup.name)
+        self._reload()
 
     def _key(self) -> tuple[int, int] | None:
         """文件的版本标记。读不到时是 None。"""
@@ -110,5 +116,9 @@ class Session:
         return self._stamp is not None and self._stamp == self._key()
 
     def _reload(self) -> None:
-        self._messages = _read(self.path)
+        scan = scan_session(self.path)
+        self._messages = scan.messages
+        self._partial_tail = scan.issue == "partial_tail"
+        if self._partial_tail:
+            _logger.warning("Session has an incomplete tail; read-only access leaves it unchanged")
         self._stamp = self._key()

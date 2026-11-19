@@ -63,6 +63,7 @@ def test_lists_creates_and_reads_a_session(tmp_path: Path):
             assert body.json() == {
                 "id": session_id,
                 "messages": [],
+                "warnings": [],
                 "skill": None,
                 "skills": None,
                 "mode": "react",
@@ -180,7 +181,7 @@ def test_parallel_children_stream_and_reload_independently_then_stop_together(tm
                 for index in range(5):
                     yield ProviderEvent(kind="tool_call_end", name="delegate", tool_call_id=f"child-{index}", arguments={"task": f"task-{index}"})
                 return
-            task = messages[0].content
+            task = messages[-1].content
             started.append(task)
             yield ProviderEvent(kind="thinking_delta", text=f"thinking {task}")
             yield ProviderEvent(kind="text_delta", text=f"partial {task}")

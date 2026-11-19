@@ -1,10 +1,19 @@
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass, field
 from typing import Any
 
 from vector_harness.types import Message, ProviderEvent, ToolCall
 
+
+def summary_json(**fields: list[str]) -> str:
+    summary = {name: [] for name in (
+        "goal", "constraints", "decisions", "completed", "remaining", "verification", "references"
+    )}
+    summary["goal"] = ["summary"]
+    summary.update(fields)
+    return json.dumps(summary, ensure_ascii=False)
 
 @dataclass
 class ScriptedTurn:

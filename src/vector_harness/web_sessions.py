@@ -13,6 +13,7 @@ from pathlib import Path
 from uuid import uuid4
 
 from vector_harness.web_children import read_children
+from vector_harness.core.session_io import scan_session
 
 SESSION_MODES = frozenset({"react", "plan", "reflect", "subagents"})
 
@@ -183,6 +184,12 @@ def delete_session(workspace: Path, session_id: str) -> None:
     (directory / f"{session_id}.run.json").unlink(missing_ok=True)
     (directory / f"{session_id}.children.jsonl").unlink(missing_ok=True)
     (directory / f"{session_id}.mode").unlink(missing_ok=True)
+    (directory / f"{session_id}.context.json").unlink(missing_ok=True)
+    (directory / f"{session_id}.task.json").unlink(missing_ok=True)
+    for backup in directory.iterdir():
+        if re.fullmatch(rf"{session_id}\.recovery-[0-9a-f]{{32}}\.bin", backup.name):
+            if backup.is_file() or backup.is_symlink():
+                backup.unlink()
 
 
 def read_messages(workspace: Path, session_id: str) -> list[dict]:
@@ -190,12 +197,17 @@ def read_messages(workspace: Path, session_id: str) -> list[dict]:
 
     空行、无法解析的行，以及不是 JSON 对象的行都跳过。
     """
+    return read_session_view(workspace, session_id)["messages"]
+
+
+def read_session_view(workspace: Path, session_id: str) -> dict:
     if not is_session_id(session_id):
         raise ValueError(session_id)
     path = _sessions_dir(workspace) / f"{session_id}.jsonl"
     if not path.is_file():
         raise FileNotFoundError(path)
-    messages = list(_objects(path))
+    scan = scan_session(path, tolerant=True)
+    messages = scan.records
     children = read_children(path)
     for message in messages:
         calls = message.get("tool_calls")
@@ -206,7 +218,8 @@ def read_messages(workspace: Path, session_id: str) -> list[dict]:
                 child = children.get(call["id"])
                 if child is not None:
                     call["child"] = child
-    return messages
+    warnings = [f"session_{scan.issue}"] if scan.issue else []
+    return {"messages": messages, "warnings": warnings}
 
 
 def _sessions_dir(workspace: Path) -> Path:
@@ -263,14 +276,4 @@ def _title(path: Path, session_id: str) -> str:
 
 
 def _objects(path: Path) -> list[dict]:
-    messages: list[dict] = []
-    for line in path.read_text(encoding="utf-8").splitlines():
-        if not line.strip():
-            continue
-        try:
-            data = json.loads(line)
-        except json.JSONDecodeError:
-            continue
-        if isinstance(data, dict):
-            messages.append(data)
-    return messages
+    return scan_session(path, tolerant=True).records

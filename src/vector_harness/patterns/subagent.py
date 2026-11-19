@@ -41,7 +41,17 @@ class _Delegate:
         task = arguments.get("task", "")
         if not isinstance(task, str):
             task = str(task)
-        child_tools = [tool for tool in self.tools if tool.name != "delegate"]
+        session = Session.in_memory()
+        available = self.host.tools if self.host is not None else self.tools
+        child_tools = [
+            tool.for_session(session) if hasattr(tool, "for_session") else tool
+            for tool in available if tool.name != "delegate"
+        ]
+        transforms = self.host.context_transforms if self.host is not None else self.context_transforms
+        child_transforms = [
+            transform.for_session(session) if hasattr(transform, "for_session") else transform
+            for transform in transforms or []
+        ]
         callback = self.host.on_event if self.host is not None else None
         parent_call_id = current_tool_call_id.get()
 
@@ -52,11 +62,12 @@ class _Delegate:
         child = Loop(
             provider=self.provider,
             tools=child_tools,
-            session=Session.in_memory(),
+            session=session,
             system=self.system,
-            context_transforms=self.context_transforms,
+            context_transforms=child_transforms,
             tool_hooks=self.tool_hooks,
             max_steps=self.max_steps,
+            workdir=self.host.workdir if self.host is not None else None,
             on_event=on_event if callback is not None else None,
         )
         result = await child.run(task)

@@ -118,6 +118,16 @@ SubAgents 模式下，子代理的思考、正文和工具调用会随运行增�
 
 `--compact`、`--subagents`、`--memory`、`--memory-path`、`--max-steps` 写在启动命令上，页面上没有对应开关。`--max-steps` 默认 25。
 
+### 同一会话的长任务连续性
+
+重新指定同一个 `--session 文件.jsonl`，或在 Web 打开原会话，就能继续使用原历史。**打开会话不会自动续做**；发送新消息才运行，询问进度不会因为旧待办尚未完成而自动推进。
+
+`--compact` 仍需显式启用，默认阈值为 80000 字符、至少保留最近 8 条消息。压缩仅改变发给模型的上下文投影，完整 JSONL 原文仍保留。相邻的 `.context.json` 保存结构化摘要及覆盖前缀指纹，`.task.json` 保存成功提交的待办快照；计划状态也能从成功工具结果重建。压缩启用后，模型可用 `read_session_history` 按消息序号或字面关键词回查原文，单次返回最多 16000 字符并支持分页。原文包含用户提供的数据，敏感信息仍应按会话文件管理。
+
+中断后缺失工具结果只表示“执行结果未知”，不会自动重放工具。尾部半条记录在下一次运行前先备份再修复；中间损坏会阻止运行，Web 仍显示有效记录与警告。工作目录改变后会提醒模型重新核查旧路径和验证结果。
+
+这是同一会话的连续性机制，现有 `--memory` 行为不变。字符预算不是 token 预算；摘要质量依赖模型，旧版本压缩已删除的原文无法恢复。会话文件按单写者使用，不支持多个进程同时写入，也不保证工具恰好执行一次或断电零数据损失。
+
 技能目录：写了 `--skills` 就用那个目录，目录必须已经存在。没写时，如果当前目录下有 `skills/`，就用它。当前会话可以选一个技能，索引和读取都只包含这一个；选「不使用」则这一份会话不挂技能。
 
 右侧列出工具使用的工作目录，启动时等于 `--workspace`，可以在页面上换成别的目录。会话仍留在启动时的工作目录里。有一轮正在跑时不能换。点开头的名字不列出。
@@ -271,6 +281,16 @@ Each message uses one mode chosen on the page. The default is ReAct:
 Every message from the page includes the selected mode. `--plan` and `--reflect` apply only when a request omits the mode. The page uses one of the three modes above for a message.
 
 `--compact`, `--subagents`, `--memory`, `--memory-path`, and `--max-steps` stay on the startup command. The page has no switches for them. `--max-steps` defaults to 25.
+
+### Long tasks in the same session
+
+Reopen the same `--session file.jsonl`, or select the original Web session, to retain task context. **Opening a session never resumes execution automatically.** A new user message starts a run; a progress question does not advance an old unfinished plan by itself.
+
+Compaction remains opt-in with `--compact`: 80000 characters by default, retaining at least the latest 8 messages. It changes the model's context projection while preserving the complete JSONL history. Adjacent `.context.json` and `.task.json` files store validated summary checkpoints and confirmed todo snapshots. Todos can also be rebuilt from committed successful tool results. With compaction enabled, `read_session_history` retrieves original messages by index or literal search, with pagination and a 16000-character response limit. Raw history retains user-provided data and should be handled accordingly.
+
+Missing tool results after an interruption mean the outcome is unknown; tools are not automatically replayed. An incomplete final record is backed up and repaired only when a new run starts. Corruption in the middle blocks execution; Web displays valid records with a warning. A changed working directory prompts rechecking old paths and verification results.
+
+Existing `--memory` behavior is unchanged. Character counts are not token counts, summary quality depends on the model, and text deleted by older compaction cannot be recovered. Use one writer per session: concurrent processes, exactly-once tool execution, and zero data loss on power failure are not guaranteed.
 
 Skills: `--skills` selects a directory, and that directory must already exist. When the flag is omitted, `skills/` under the current directory is used if it exists. A session can select one skill; the index and `read_skill` then include only that skill. Choosing none leaves skills off for that session.
 

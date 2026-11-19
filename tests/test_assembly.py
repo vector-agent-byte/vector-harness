@@ -303,5 +303,5 @@ def test_failed_reflection_plans_again():
 
     assert agent.run("任务") == "第二版"
     text = "\n".join(message.content for message in agent.get_history())
-    assert text.index("1. one") < text.index("1. two")
+    assert text.index('"content": "one"') < text.index('"content": "two"')
     assert "反思意见：" in text

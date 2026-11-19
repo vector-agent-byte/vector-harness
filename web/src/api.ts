@@ -95,6 +95,10 @@ export function normalizeMessages(value: unknown): ChatMessage[] {
   return messages
 }
 
+export function normalizeWarnings(value: unknown): string[] {
+  return Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : []
+}
+
 export async function readError(response: Response): Promise<string> {
   try {
     const body = (await response.json()) as { error?: unknown }

@@ -72,7 +72,16 @@ def apply_patterns(
         from vector_harness.patterns.subagent import attach_delegate
 
         attach_delegate(loop, provider=provider, max_steps=child_max_steps)
-    return _rewrap(loop, runner, plan=plan, reflect=reflect)
+    wrapped = _rewrap(loop, runner, plan=plan, reflect=reflect)
+    from vector_harness.patterns.compact import Compaction
+    from vector_harness.patterns.task_state import TaskContext, task_context_chars
+
+    has_task_context = any(isinstance(item, TaskContext) for item in loop.context_transforms)
+    loop.context_transforms.sort(key=lambda item: 0 if isinstance(item, Compaction) else 1)
+    for transform in loop.context_transforms:
+        if isinstance(transform, Compaction):
+            transform.extra_context_chars = task_context_chars if has_task_context else None
+    return wrapped
 
 
 def attach(

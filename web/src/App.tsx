@@ -9,6 +9,7 @@ import type { SkillSelection } from "./skills.ts"
 import { entryMenu as entryMenuLabels, findListableDir, highlightCode, listingGenerationIsCurrent, refreshMayReplaceDraft, REFRESH_MS, shouldShowPicker, viewedPathAfter } from "./dirPath.ts"
 import {
   normalizeMessages,
+  normalizeWarnings,
   parseDirs,
   parseSessionList,
   parseSkills,
@@ -175,6 +176,12 @@ export default function App() {
     const body = (await response.json()) as Record<string, unknown>
     if (settingsRevision === settingsRevisionRef.current && !savingModeRef.current && !savingSkillsRef.current) {
       setSessions(current => current.map(item => item.id === id ? { ...item, mode: normalizeMode(body.mode), skills: sessionSkillSelection(body) } : item))
+    }
+    const warnings = normalizeWarnings(body.warnings)
+    if (settingsRevision === settingsRevisionRef.current && openIdRef.current === id) {
+      setErrorText(current => openIdRef.current === id
+        ? warnings[0] ?? (current?.startsWith("session_") ? null : current)
+        : current)
     }
     return normalizeMessages(body.messages)
   }, [refreshList])

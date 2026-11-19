@@ -113,6 +113,7 @@ def test_build_agent_wires_all_five_patterns(tmp_path: Path):
         "shell",
         "read_skill",
         "remember",
+        "read_session_history",
         "delegate",
         "update_todos",
     ]
@@ -253,7 +254,7 @@ def test_main_runs_task_and_writes_session(tmp_path: Path, capsys):
         for message in call["messages"]
         if message["role"] == "user"
     ]
-    assert user_texts == ["fix it"]
+    assert user_texts == [f"[当前运行环境]\n工作目录：{workspace.resolve()}\n此前工作目录：未知。", "fix it"]
     assert "MODEL_SAYS_FIX" in capsys.readouterr().out
     sessions = list((workspace / ".vector" / "sessions").glob("*.jsonl"))
     assert len(sessions) == 1
@@ -309,7 +310,7 @@ def test_memory_flag_before_the_task_does_not_wait_for_stdin(tmp_path: Path):
         for message in call["messages"]
         if message["role"] == "user"
     ]
-    assert user_texts == ["项目代号是什么"]
+    assert user_texts == [f"[当前运行环境]\n工作目录：{workspace.resolve()}\n此前工作目录：未知。", "项目代号是什么"]
     remember = next(tool for tool in provider.seen_tools if tool.name == "remember")
     assert remember.path == workspace / ".vector" / "MEMORY.md"
 
@@ -660,7 +661,7 @@ def test_stdin_stops_at_exit_and_skips_the_rest(tmp_path: Path):
         for message in call["messages"]
         if message["role"] == "user"
     ]
-    assert user_texts == ["hello"]
+    assert user_texts == [f"[当前运行环境]\n工作目录：{workspace.resolve()}\n此前工作目录：未知。", "hello"]
 
 
 def test_max_steps_returns_one(tmp_path: Path):

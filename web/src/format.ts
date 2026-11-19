@@ -62,6 +62,8 @@ export function viewedPath(root: string, current: string): string {
 }
 
 export function errorLabel(code: string): string {
+  if (code === "session_partial_tail") return "会话尾部记录不完整，发送下一条消息前会保留副本并恢复"
+  if (code === "session_invalid_record") return "会话记录损坏，当前仅展示有效记录，不能继续执行"
   if (code === "busy") return "正在运行"
   if (code === "not_a_directory") return "不是文件夹"
   if (code === "not_a_file") return "不是文件"

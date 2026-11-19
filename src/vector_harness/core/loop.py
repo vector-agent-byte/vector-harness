@@ -39,12 +39,16 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 from collections.abc import Callable
+from copy import deepcopy
 from dataclasses import dataclass
 
-from vector_harness.core.codec import messages_equal
+from vector_harness.core.context import confirm_workdir, repair_tool_pairs, workdir_context
 from vector_harness.core.dispatch import ToolDispatcher
 from vector_harness.core.session import Session
+from vector_harness.core.session_io import SessionCorruptionError
 from vector_harness.core.turn import collect_turn
 from vector_harness.types import (
     ContextTransform,
@@ -88,6 +92,7 @@ class Loop:
     tool_hooks: list[ToolHook] | None = None  # 工具执行前，改写参数或拒绝调用
     on_event: Callable[[ProviderEvent], None] | None = None  # 接收流式事件，供终端等观察方展示
     max_steps: int = 50
+    workdir: Path | None = None
 
     def __post_init__(self) -> None:
         """没传入变换或钩子时用空列表，后面就可以直接遍历。"""
@@ -120,14 +125,13 @@ class Loop:
             self.on_event(event)
 
     async def _messages_for_model(self) -> list[Message]:
-        """跑变换。内容变了才整份写回会话。"""
-        messages = self.session.load()
-        transformed = messages
+        """在副本上变换模型上下文，原始会话不变。"""
+        transformed = deepcopy(self.session.load())
         for transform in self.context_transforms or []:
             transformed = await transform.apply(transformed)
-        if not messages_equal(messages, transformed):
-            self.session.replace_all(transformed)
-        return transformed
+        if self.session.runtime_context:
+            transformed.insert(0, Message(role=Role.USER, content=self.session.runtime_context))
+        return repair_tool_pairs(transformed)
 
     async def run(self, user_text: str) -> RunResult:
         """把用户文本追加进会话，然后一步一步问模型。
@@ -136,12 +140,23 @@ class Loop:
         文本留空。只有 ``ProviderError`` 变成 ``status="error"``。
         ``max_steps < 1`` 时一次模型请求都不发，同样按到达上限返回。
         """
-        self.session.append(Message(role=Role.USER, content=user_text))
+        try:
+            self.session.prepare_for_run()
+            repair_tool_pairs(self.session.load())
+            self.session.append(Message(role=Role.USER, content=user_text))
+            self.session.runtime_context = workdir_context(self.session, self.workdir)
+        except (OSError, SessionCorruptionError) as exc:
+            self._emit(ProviderEvent(kind=EventKind.RUN_END, status=RunStatus.ERROR))
+            return _result(self.session, RunStatus.ERROR, str(exc), 0)
+        for transform in self.context_transforms or []:
+            notify = getattr(transform, "on_run_start", None)
+            if notify is not None:
+                notify(len(self.session.load()))
         result: RunResult | None = None
 
         for step in range(1, self.max_steps + 1):
-            messages = await self._messages_for_model()
             try:
+                messages = await self._messages_for_model()
                 turn = await collect_turn(
                     self.provider,
                     system=self.system,
@@ -149,12 +164,13 @@ class Loop:
                     tools=self.tools,
                     on_event=self.on_event,
                 )
-            except ProviderError as exc:
+            except (ProviderError, SessionCorruptionError, OSError) as exc:
                 result = _result(self.session, RunStatus.ERROR, str(exc), step)
                 break
 
             if not turn.tool_calls:
                 self.session.append(Message(role=Role.ASSISTANT, content=turn.text))
+                confirm_workdir(self.session, self.workdir)
                 result = _result(self.session, RunStatus.COMPLETE, turn.text, step)
                 break
 
@@ -165,6 +181,7 @@ class Loop:
                     tool_calls=turn.tool_calls,
                 )
             )
+            confirm_workdir(self.session, self.workdir)
             await ToolDispatcher(
                 self.session, self.tools, self.tool_hooks, self.on_event
             ).dispatch(turn.tool_calls)
