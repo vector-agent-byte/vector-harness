@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react"
 import ReactMarkdown from "react-markdown"
 import remarkGfm from "remark-gfm"
+import { reflectionInitiallyOpen, reflectionPreview } from "./reflection.ts"
 import type { ChatMessage, LiveTurn, StatusKind, TodoItem } from "./types.ts"
 
 export function Markdown({ text }: { text: string }) {
@@ -40,17 +41,18 @@ export function TodoList({ todos }: { todos: TodoItem[] }) {
 
 export function ReflectionCard({ pass, text }: { pass: boolean; text: string }) {
   return (
-    <div className={`reflection-card ${pass ? "pass" : "fail"}`}>
-      <span className="reflection-verdict">{pass ? "反思通过" : "反思未通过"}</span>
-      {text ? <span className="reflection-text">{text}</span> : null}
-    </div>
+    <details className={`reflection-card ${pass ? "pass" : "needs-work"}`} open={reflectionInitiallyOpen(text)}>
+      <summary className="reflection-summary">
+        <span className="reflection-heading">
+          <span className="reflection-title">反思审查</span>
+          <span className="reflection-verdict">{pass ? "通过" : "需改进"}</span>
+          <span className="reflection-toggle" aria-hidden="true" />
+        </span>
+        {text ? <span className="reflection-preview">{reflectionPreview(text)}</span> : null}
+      </summary>
+      {text ? <div className="reflection-text"><Markdown text={text} /></div> : null}
+    </details>
   )
-}
-
-export function parseReflection(content: string): { pass: boolean; text: string } | null {
-  const m = content.match(/^\[Reflection\]\s*(通过|未通过)\s*[—-]\s*(.*)$/s)
-  if (!m) return null
-  return { pass: m[1] === "通过", text: m[2].trim() }
 }
 
 export function ThinkingBlock({ text, streaming }: { text: string; streaming: boolean }) {

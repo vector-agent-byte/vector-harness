@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react"
 import type { CSSProperties, FormEvent, KeyboardEvent, MouseEvent, PointerEvent as ReactPointerEvent } from "react"
 import { MODES, normalizeMode } from "./modes.ts"
 import { updateChildren } from "./children.ts"
+import { lastUserMessageTime, messagePresentation } from "./reflection.ts"
 import { ChildAgentCard } from "./ChildAgentCard.tsx"
 import type { ModeId } from "./modes.ts"
 import { sessionSkillSelection, skillSelectionLabel, toggleSkill } from "./skills.ts"
@@ -36,7 +37,6 @@ import {
   ThinkingBlock,
   TodoList,
   TraceView,
-  parseReflection,
 } from "./components.tsx"
 import type {
   ChatMessage,
@@ -1145,9 +1145,7 @@ export default function App() {
     (live.thinking !== "" || live.text !== "" || live.tools.length > 0)
   const visibleStatus =
     runNote && runNote.id === openId && runNote.status !== "complete" ? runNote.status : null
-  const liveSentAt = [...messages]
-    .reverse()
-    .find((item) => item.role === "user" && item.created_at !== null)?.created_at
+  const liveSentAt = lastUserMessageTime(messages)
   const liveTiming =
     liveSentAt == null
       ? null
@@ -1271,11 +1269,9 @@ export default function App() {
                       const calledName = toolCallNames.get(message.tool_call_id)
                       if (calledName && SILENT_TOOLS.has(calledName) && !message.is_error) return []
                     }
-                    const sentAt = [...messages.slice(0, index)]
-                      .reverse()
-                      .find((item) => item.role === "user" && item.created_at !== null)?.created_at ?? null
-                    const timeLabel = messageTimeLabel(message, sentAt)
-                    const isUser = message.role === "user"
+                    const sentAt = lastUserMessageTime(messages.slice(0, index))
+                    const { role: displayRole, isUser, reflection } = messagePresentation(message)
+                    const timeLabel = messageTimeLabel(message, reflection ? null : sentAt)
                     const children = []
                     for (const call of message.tool_calls ?? []) {
                       const childSection = showLive && live?.children.some(child => child.toolCallId === call.id)
@@ -1295,7 +1291,7 @@ export default function App() {
                     const article = (
                       <article
                         key={`${index}-${message.role}`}
-                        className={`message-row ${message.role}${message.is_error ? " is-error" : ""}${locatedUser === index ? " is-located" : ""}`}
+                        className={`message-row ${displayRole}${reflection ? " reflection-row" : ""}${message.is_error ? " is-error" : ""}${isUser && locatedUser === index ? " is-located" : ""}`}
                         data-user-message={isUser ? index : undefined}
                         data-label={isUser ? userPreview(message.content) : undefined}
                       >
@@ -1304,13 +1300,11 @@ export default function App() {
                             {message.role === "tool" && message.is_error ? (
                               <div className="fail">失败</div>
                             ) : null}
-                            {message.role === "tool" ? (
+                            {reflection ? (
+                              <ReflectionCard pass={reflection.pass} text={reflection.text} />
+                            ) : message.role === "tool" ? (
                               <pre className="tool-output">{message.content}</pre>
-                            ) : (() => {
-                              const reflection = parseReflection(message.content)
-                              if (reflection) return <ReflectionCard pass={reflection.pass} text={reflection.text} />
-                              return <Markdown text={message.content} />
-                            })()}
+                            ) : <Markdown text={message.content} />}
                             {message.tool_calls?.map((call, callIndex) => {
                               if (!call.name) return null
                               if (call.name === "update_todos" && Array.isArray(call.args?.todos)) {
@@ -1320,9 +1314,8 @@ export default function App() {
                               if (call.name === "submit_verdict") {
                                 const pass = call.args?.pass === true
                                 return (
-                                  <div key={`${call.id}-${callIndex}`} className={`verdict-pill ${pass ? "pass" : "fail"}`}>
-                                    {pass ? "✓ 反思通过" : "✗ 反思未通过"}
-                                  </div>
+                                  <ReflectionCard key={`${call.id}-${callIndex}`} pass={pass}
+                                    text={typeof call.args?.critique === "string" ? call.args.critique : ""} />
                                 )
                               }
                               const summary = toolSummary(call.name, call.args)
@@ -1362,9 +1355,8 @@ export default function App() {
                           if (tool.name === "submit_verdict") {
                             const pass = tool.args?.pass === true
                             return (
-                              <div key={`${tool.name}-${index}`} className={`verdict-pill ${pass ? "pass" : "fail"}`}>
-                                {pass ? "✓ 反思通过" : "✗ 反思未通过"}
-                              </div>
+                              <ReflectionCard key={`${tool.name}-${index}`} pass={pass}
+                                text={typeof tool.args?.critique === "string" ? tool.args.critique : ""} />
                             )
                           }
                           const summary = toolSummary(tool.name, tool.args)
