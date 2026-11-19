@@ -42,7 +42,7 @@ function saveMeta(id: string, meta: ResearchMeta) {
 }
 
 function buildResearchPrompt(topic: string, engine: string): string {
-  return `请对以下主题进行深度调研：
+  return `请对以下主题进行深度研究：
 
 主题：${topic}
 
@@ -439,7 +439,7 @@ export default function DeepResearch() {
         <div className="research-left-header">
           <div className="research-title">
             <span className="research-title-icon">🔍</span>
-            深度调研
+            深度研究
           </div>
         </div>
 
@@ -536,7 +536,7 @@ export default function DeepResearch() {
               <div className="research-heading-row">
                 <span className="research-heading-label">研究主题</span>
                 <span className="research-heading-title" title={openSession.topic}>
-                  {(openSession.topic.split("\n")[0] || "深度调研").slice(0, 80)}
+                  {(openSession.topic.split("\n")[0] || "深度研究").slice(0, 80)}
                   {openSession.topic.replace(/\n.*/s, "").length > 80 ? "…" : ""}
                 </span>
                 {openSession.topic.length > 40 && (
@@ -586,7 +586,7 @@ export default function DeepResearch() {
         {!openSession ? (
           <div className="research-empty">
             <div className="research-empty-icon">🔍</div>
-            <div className="research-empty-title">开始深度调研</div>
+            <div className="research-empty-title">开始深度研究</div>
             <div className="research-empty-hint">在左侧输入研究主题，然后点击"开始新研究"</div>
           </div>
         ) : (
