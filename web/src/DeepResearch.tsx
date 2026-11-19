@@ -122,13 +122,30 @@ export default function DeepResearch() {
     const savedOpen = localStorage.getItem(RESEARCH_OPEN_KEY)
     if (savedIds.length === 0) return
     void (async () => {
+      // Fetch session list to get real server-side timestamps (seconds)
+      const serverTs: Record<string, number> = {}
+      try {
+        const listRes = await fetch("/api/sessions", { cache: "no-store" })
+        if (listRes.ok) {
+          const data = (await listRes.json()) as { sessions?: Array<{ id: string; updated_at?: number }> }
+          for (const s of data.sessions ?? []) {
+            if (s.id && typeof s.updated_at === "number") {
+              serverTs[s.id] = s.updated_at * 1000  // convert to ms
+            }
+          }
+        }
+      } catch { /* ignore */ }
+
       const meta = loadMeta()
       const loaded: ResearchSession[] = []
       for (const id of savedIds) {
         const msgs = await loadSession(id)
         if (!msgs) continue
         const topic = meta[id]?.topic || extractResearchTopic(msgs)
-        const updated_at = meta[id]?.updated_at ?? Date.now()
+        // Server timestamp is most accurate; fall back to stored meta, then now
+        const updated_at = serverTs[id] ?? meta[id]?.updated_at ?? Date.now()
+        // Persist correct timestamp so next reload doesn't need server call
+        saveMeta(id, { topic, updated_at })
         loaded.push({ id, topic, messages: msgs, status: "complete", updated_at, eventCount: msgs.length })
       }
       if (loaded.length === 0) return

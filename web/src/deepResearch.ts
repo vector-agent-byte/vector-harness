@@ -118,12 +118,18 @@ export function extractTaskDetail(taskIndex: number, messages: ChatMessage[]): R
             }
           }
         }
-        childCalls.push({
-          queries,
-          notePath,
-          summary: call.child.text,
-          callId: call.id,
-        })
+        // child.text comes from streamed text_delta events; if empty, the tool
+        // result message holds the same final text from the child loop
+        let summary = call.child.text
+        if (!summary) {
+          for (const m of messages) {
+            if (m.role === "tool" && m.tool_call_id === call.id && m.content) {
+              summary = m.content
+              break
+            }
+          }
+        }
+        childCalls.push({ queries, notePath, summary, callId: call.id })
       }
     }
   }
