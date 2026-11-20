@@ -1227,7 +1227,10 @@ export default function App() {
             <circle cx="12.5" cy="12" r="1" fill="currentColor" stroke="none" />
             <path d="M10 2v2" />
           </svg>
-          智能体
+          <div className="brand-name">
+            <strong>harness</strong>
+            <small>智能体</small>
+          </div>
         </div>
         <button type="button" className="new-session" onClick={() => void createSession()}>
           <svg className="new-session-icon" aria-hidden="true" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">

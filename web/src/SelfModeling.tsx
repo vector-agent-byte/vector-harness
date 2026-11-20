@@ -322,7 +322,7 @@ export default function SelfModeling() {
 
     return <div className="model-app">
         <aside className="model-sidebar">
-            <div className="model-brand"><Icon/><strong>自进化建模</strong><span>BETA</span></div>
+            <div className="model-brand"><Icon/><div className="model-brand-name"><strong>auto-research</strong><small>自进化建模</small></div><span>BETA</span></div>
             <button className="model-new" onClick={() => newTask()}><Icon kind="plus" size={16}/>新建建模任务</button>
             <div className="model-sidebar-section"><span>建模工作台</span></div>
             <button className={`model-side-link ${!viewing ? "is-active" : ""}`} onClick={() => newTask()}><Icon

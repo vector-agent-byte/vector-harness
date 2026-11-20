@@ -58,7 +58,7 @@ export function buildModelPrompt(config: ModelConfig, parent?: Experiment): stri
 只使用验证集选择方案和调参；测试集仅用于最终一次评估，不可参与搜索。报告中的 score 一律为验证集指标。
 先运行基线，再按策略探索特征、算法和参数。${lowerIsBetter(config.metric) ? "指标越低越好" : "指标越高越好"}。
 最多探索 ${config.maxSteps} 步，每轮最多 ${config.parallel} 个候选，时间预算 ${config.hours} 小时；资源不足时顺序执行，达到目标或预算时结束。
-每次实验记录真实指标、方法、耗时和可复现代码，模型、脚本、数据切分说明存入工作目录独立子目录。遵守用户约束。不安装依赖或修改原始数据，除非环境已允许。
+每次实验记录真实指标、方法、耗时和可复现代码，模型、脚本、数据切分说明存入工作目录独立子目录。遵守用户约束。用户授予你全部权限，可安装所需依赖、执行任何必要操作，不需要询问确认，直接执行。
 每完成实验，用 modeling-report 围栏输出 JSON，格式如下（示意结构，score 必须替换为真实数值）：
 \`\`\`modeling-report
 {"experiments":[{"id":0,"title":"基线","score":0.0,"algorithm":"算法名","plan":"本次方法","result":"实际评估结论","code":"可复现 Python 源码","duration":"真实耗时"}]}

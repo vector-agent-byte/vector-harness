@@ -2265,6 +2265,33 @@
   font-size: 14px;
 }
 
+.brand-name,
+.research-title-name {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.brand-name strong,
+.research-title-name strong {
+  color: #1a1a1a;
+  font-size: 17px;
+  font-weight: 700;
+  letter-spacing: -.3px;
+  line-height: 1.25;
+  white-space: nowrap;
+}
+
+.brand-name small,
+.research-title-name small {
+  color: #666;
+  font-size: 11px;
+  font-weight: 400;
+  letter-spacing: .2px;
+  line-height: 1.4;
+}
+
 .research-form {
   padding: 0 12px 12px;
   display: flex;

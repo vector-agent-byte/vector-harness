@@ -439,7 +439,10 @@ export default function DeepResearch() {
         <div className="research-left-header">
           <div className="research-title">
             <span className="research-title-icon">🔍</span>
-            深度研究
+            <div className="research-title-name">
+              <strong>deep-research</strong>
+              <small>深度研究</small>
+            </div>
           </div>
         </div>
 
