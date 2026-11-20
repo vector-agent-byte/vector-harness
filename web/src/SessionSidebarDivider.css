@@ -27,12 +27,12 @@
   transform: translateY(-50%);
   display: grid;
   place-items: center;
-  width: 18px;
-  height: 70px;
+  width: 14px;
+  height: 44px;
   padding: 0;
   border: 1px solid #e7e7e7;
   border-left: 0;
-  border-radius: 0 12px 12px 0;
+  border-radius: 0 8px 8px 0;
   background: #fff;
   color: #929292;
   box-shadow: 2px 0 8px rgb(0 0 0 / 4%);
@@ -41,8 +41,8 @@
 }
 
 .sidebar-collapse-button svg {
-  width: 10px;
-  height: 16px;
+  width: 8px;
+  height: 12px;
 }
 
 .sidebar-collapse-button:hover {
