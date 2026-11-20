@@ -81,14 +81,13 @@ try {
     const originalFetch = window.fetch;
     window.modelMode = 'complete';
     let runningId = null;
-    let runNumber = 0;
     let streamController;
     const output = '\\n\u0060\u0060\u0060modeling-report\\n' + JSON.stringify({ experiments: [{ id: 0, title: '真实接口测试基线', score: 0.72, algorithm: 'LightGBM', plan: '固定验证集', result: '测试响应', code: 'print(0.72)' }] }) + '\\n\u0060\u0060\u0060';
     window.fetch = async (url, options = {}) => {
       if (typeof url !== 'string' || !url.startsWith('/api/')) return originalFetch(url, options);
       window.modelCalls.push({ url, method: options.method || 'GET', body: options.body });
       const json = data => new Response(JSON.stringify(data), { headers: { 'Content-Type': 'application/json' } });
-      if (url === '/api/sessions' && options.method === 'POST') return json({ id: 'model-test-' + (++runNumber) });
+      if (url === '/api/sessions' && options.method === 'POST') return json({ id: 'model-test-' + crypto.randomUUID() });
       if (url === '/api/sessions') return json({ sessions: [], running_id: runningId, model: 'test' });
       if (url.endsWith('/mode')) return json({ mode: 'plan' });
       if (url.endsWith('/messages')) {
@@ -98,8 +97,19 @@ try {
         const event = payload => encoder.encode('data: ' + JSON.stringify(payload) + '\\n\\n');
         return new Response(new ReadableStream({ start(controller) {
           streamController = controller;
-          controller.enqueue(event({ kind: 'text_delta', text: output }));
+          window.modelEmit = payload => controller.enqueue(event(payload));
+          controller.enqueue(event({ kind: 'thinking_delta', text: '正在检查训练数据' }));
+          controller.enqueue(event({ kind: 'tool_call_end', name: 'update_todos', arguments: { todos: [
+            { content: '检查数据路径、字段、依赖和可用资源', status: 'completed' },
+            { content: '创建固定训练、验证和测试集，完成数据清洗与预处理', status: 'in_progress' },
+            { content: '运行基线模型并记录结果', status: 'pending' }
+          ] } }));
+          controller.enqueue(event({ kind: 'tool_call_end', name: 'shell', tool_call_id: 'train-1', arguments: { command: 'python train.py' } }));
+          controller.enqueue(event({ kind: 'tool_execution_start', name: 'shell', tool_call_id: 'train-1' }));
+          controller.enqueue(event({ kind: 'tool_result', name: '', tool_call_id: 'train-1', text: '已加载 1000 行训练数据' }));
+          controller.enqueue(event({ kind: 'text_delta', origin: 'child', parent_tool_call_id: 'delegate-1', text: '子任务正在评估候选方案' }));
           if (window.modelMode !== 'running') {
+            controller.enqueue(event({ kind: 'text_delta', text: output }));
             controller.enqueue(event({ kind: 'run_result', status: 'complete' }));
             controller.close(); runningId = null;
           }
@@ -132,7 +142,7 @@ try {
   await click("结果分析")
   assert.equal(await evaluate("document.querySelectorAll('.model-comparison tbody tr').length"), 12)
   await screenshot("03-analysis.png")
-  await evaluate("document.querySelector('.model-chart circle').dispatchEvent(new MouseEvent('click', { bubbles: true }))")
+  await evaluate("document.querySelector('.model-chart [role=button]').dispatchEvent(new MouseEvent('click', { bubbles: true }))")
   await waitFor("!!document.querySelector('.model-experiment-detail')")
   await click("基于此方案继续探索 ↗")
   assert.equal(await evaluate("!!document.querySelector('.model-parent-note')"), true)
@@ -148,15 +158,45 @@ try {
   await click("智能体")
   await click("自进化建模")
   assert.equal(await evaluate("document.querySelector('.model-task-title h1').textContent"), '测试建模任务')
+  const savedLogTimes = await evaluate("JSON.parse(localStorage.getItem('vh-modeling-sessions-v1'))[0].logs.map(entry => new Date(entry.createdAt).toISOString()).reverse()")
   await send("Page.reload")
   await waitFor("document.querySelectorAll('.model-history-item').length === 1")
   await evaluate("document.querySelector('.model-history-item').click()")
   await waitFor("document.querySelectorAll('.model-step').length === 1")
+  await click("执行日志")
+  assert.deepEqual(await evaluate("[...document.querySelectorAll('.model-log-meta time')].map(item => item.dateTime)"), savedLogTimes)
+  assert.match(await evaluate("document.querySelector('.model-log-panel').textContent"), /python train.py/)
+  assert.match(await evaluate("document.querySelector('.model-log-panel').textContent"), /已加载 1000 行训练数据/)
   await click("任务配置")
   await click("复制为新任务 ↗")
   await evaluate("window.modelMode = 'running'")
   await click("开始探索")
   await waitFor("document.querySelector('.model-state')?.textContent === '探索中'")
+  await click("执行日志")
+  await waitFor("document.querySelector('.model-log-panel')?.textContent.includes('python train.py')")
+  const runningLogs = await evaluate("document.querySelector('.model-log-panel').textContent")
+  assert.match(runningLogs, /正在检查训练数据/)
+  assert.match(runningLogs, /执行中 · shell/)
+  assert.match(runningLogs, /已加载 1000 行训练数据/)
+  assert.match(runningLogs, /子任务正在评估候选方案/)
+  assert.match(await evaluate("document.querySelector('.model-log-entry').textContent"), /子任务正在评估候选方案/)
+  assert.equal(await evaluate("document.querySelectorAll('.model-log-entry[open]').length"), 0)
+  assert.match(await evaluate("document.querySelector('.model-log-meta time').textContent"), /\d{4}\/\d{2}\/\d{2}.*\d{2}:\d{2}:\d{2}/)
+  await screenshot("06-running-logs.png")
+  await evaluate("[...document.querySelectorAll('.model-log-summary')].find(item => item.textContent.includes('调用工具 · shell')).click()")
+  assert.equal(await evaluate("[...document.querySelectorAll('.model-log-entry[open] pre')].some(item => item.textContent.includes('python train.py'))"), true)
+  await evaluate("[...document.querySelectorAll('.model-log-summary')].find(item => item.textContent.includes('调用工具 · shell')).click()")
+  await evaluate("[...document.querySelectorAll('.model-log-summary')].find(item => item.textContent.includes('update_todos')).click()")
+  assert.equal(await evaluate("document.querySelectorAll('.model-log-entry[open] .model-log-todos li').length"), 3)
+  assert.equal(await evaluate("document.querySelector('.model-log-raw').open"), false)
+  await evaluate("window.modelEmit({kind: 'thinking_delta', text: '准备下一轮训练'})")
+  await waitFor("document.querySelector('.model-log-entry')?.textContent.includes('准备下一轮训练')")
+  assert.equal(await evaluate("document.querySelector('.model-log-todos').closest('details').open"), true)
+  await screenshot("07-expanded-log.png")
+  await send("Emulation.setDeviceMetricsOverride", { width: 430, height: 932, deviceScaleFactor: 1, mobile: false })
+  assert.equal(await evaluate("document.documentElement.scrollWidth <= 430"), true)
+  await screenshot("08-mobile-logs.png")
+  await send("Emulation.setDeviceMetricsOverride", { width: 1440, height: 1080, deviceScaleFactor: 1, mobile: false })
   await click("深度研究")
   await click("自进化建模")
   await evaluate("window.modelMode = 'stop-error'")

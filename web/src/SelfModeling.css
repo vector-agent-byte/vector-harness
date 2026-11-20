@@ -204,6 +204,25 @@
     color: #3467bd;
 }
 
+.model-history-status.running {
+    animation: model-exploring-pulse 1.4s ease-in-out infinite;
+}
+
+@keyframes model-exploring-pulse {
+    0%, 100% {
+        opacity: 1;
+    }
+    50% {
+        opacity: .35;
+    }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .model-history-status.running {
+        animation: none;
+    }
+}
+
 .model-history-empty {
     font-size: 10px;
     color: #a4a9b1;
@@ -1552,6 +1571,206 @@
     font-size: 12px;
     line-height: 1.9;
     overflow-wrap: anywhere;
+}
+
+.model-log-toolbar {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: space-between;
+    gap: 4px 12px;
+    margin: 0 0 14px;
+    color: var(--model-muted);
+    font-size: 11px;
+}
+
+.model-log-list {
+    display: grid;
+    gap: 8px;
+}
+
+.model-log-entry {
+    min-width: 0;
+    border: 1px solid #e1e8f2;
+    border-radius: 8px;
+    background: #fff;
+    overflow: hidden;
+}
+
+.model-log-entry.is-error {
+    border-color: #efc4c4;
+}
+
+.model-log-summary {
+    display: flex;
+    align-items: flex-start;
+    gap: 12px;
+    padding: 14px;
+    list-style: none;
+}
+
+summary.model-log-summary {
+    cursor: pointer;
+}
+
+summary.model-log-summary::-webkit-details-marker {
+    display: none;
+}
+
+summary.model-log-summary:hover,
+.model-log-entry[open] > summary {
+    background: #f7f9fd;
+}
+
+.model-log-icon {
+    display: grid;
+    place-items: center;
+    flex: 0 0 30px;
+    height: 30px;
+    border-radius: 7px;
+    color: #245dc6;
+    background: #edf3ff;
+    font: 600 13px/1 ui-monospace, monospace;
+}
+
+.model-log-icon.thinking {
+    color: #7953a8;
+    background: #f3eefb;
+}
+
+.model-log-icon.result {
+    color: #08785d;
+    background: #e9f6f1;
+}
+
+.model-log-icon.error {
+    color: #b83c3c;
+    background: #fff0f0;
+}
+
+.model-log-summary-text {
+    min-width: 0;
+    flex: 1;
+}
+
+.model-log-title {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 4px 8px;
+    line-height: 1.6;
+}
+
+.model-log-title strong {
+    color: var(--model-ink);
+    font-weight: 600;
+}
+
+.model-log-latest {
+    padding: 1px 6px;
+    border-radius: 4px;
+    color: #245dc6;
+    background: #edf3ff;
+    font-size: 10px;
+}
+
+.model-log-meta {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-left: auto;
+    color: var(--model-muted);
+    font-size: 10px;
+    font-variant-numeric: tabular-nums;
+}
+
+.model-log-meta time {
+    white-space: nowrap;
+}
+
+.model-log-preview {
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+    margin-top: 4px;
+    color: var(--model-muted);
+    font-size: 12px;
+    line-height: 1.7;
+}
+
+.model-log-toggle {
+    flex: 0 0 7px;
+    height: 7px;
+    margin: 7px 3px 0 0;
+    border-right: 1.5px solid #8493a7;
+    border-bottom: 1.5px solid #8493a7;
+    transform: rotate(45deg);
+}
+
+.model-log-entry[open] > summary .model-log-toggle {
+    transform: rotate(225deg);
+    margin-top: 11px;
+}
+
+.model-log-body {
+    padding: 16px;
+    border-top: 1px solid #e9eef6;
+    max-height: 420px;
+    overflow: auto;
+    color: var(--model-text);
+}
+
+.model-log-body pre {
+    margin: 0;
+    padding: 12px;
+    border: 1px solid #e9eef6;
+    border-radius: 6px;
+    background: #f7f9fc;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+    font: 12px/1.8 ui-monospace, SFMono-Regular, Consolas, monospace;
+}
+
+.model-log-todos {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+}
+
+.model-log-todos li {
+    display: flex;
+    align-items: flex-start;
+    gap: 10px;
+    padding: 8px 0;
+}
+
+.model-log-todo-state {
+    flex: none;
+    border-radius: 4px;
+    padding: 1px 7px;
+    color: var(--model-muted);
+    background: #f0f3f7;
+    font-size: 11px;
+}
+
+.model-log-todo-state.in_progress {
+    color: #245dc6;
+    background: #edf3ff;
+}
+
+.model-log-todo-state.completed {
+    color: #08785d;
+    background: #e9f6f1;
+}
+
+.model-log-raw {
+    margin-top: 12px;
+}
+
+.model-log-raw > summary {
+    cursor: pointer;
+    color: var(--model-muted);
+    margin-bottom: 8px;
 }
 
 .model-intro p,

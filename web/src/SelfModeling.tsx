@@ -3,21 +3,24 @@ import type {FormEvent, ReactNode} from "react"
 import {normalizeMessages, readError, readEventStream} from "./api.ts"
 import {Markdown as RenderMarkdown} from "./components.tsx"
 import {
+    appendModelLog,
     bestExperiment,
     buildModelPrompt,
     defaultModelConfig,
     demoConfig,
     demoExperiments,
     lowerIsBetter,
+    modelLogsFromMessages,
     parseModelReport,
     validateModelConfig
 } from "./modeling.ts"
-import type {Experiment, ModelConfig} from "./modeling.ts"
+import type {Experiment, ModelConfig, ModelLog} from "./modeling.ts"
 import ModelEvolution from "./ModelEvolution.tsx"
+import ModelExecutionLogs from "./ModelExecutionLogs.tsx"
 import "./SelfModeling.css"
 
 type ModelStatus = "running" | "complete" | "stopped" | "error" | "interrupted"
-type ModelSession = { id: string; config: ModelConfig; status: ModelStatus; output: string; updatedAt: number }
+type ModelSession = { id: string; config: ModelConfig; status: ModelStatus; output: string; logs?: ModelLog[]; updatedAt: number }
 type Tab = "experiments" | "analysis" | "config" | "logs"
 const STORAGE_KEY = "vh-modeling-sessions-v1"
 const statusLabels: Record<ModelStatus, string> = {
@@ -147,8 +150,10 @@ export default function SelfModeling() {
                         continue
                     }
                     const data = await response.json() as { messages: unknown }
-                    const output = normalizeMessages(data.messages).filter(message => message.role === "assistant").map(message => message.content).join("\n\n")
-                    if (active) updateSession(item.id, {output, ...(list.running_id !== item.id ? {status: "interrupted" as const} : {})})
+                    const messages = normalizeMessages(data.messages)
+                    const output = messages.filter(message => message.role === "assistant").map(message => message.content).join("\n\n")
+                    const logs = modelLogsFromMessages(messages)
+                    if (active) updateSession(item.id, {output, ...(logs.length ? {logs} : {}), ...(list.running_id !== item.id ? {status: "interrupted" as const} : {})})
                 }
             } catch {
                 if (active) setNotice("暂时无法同步任务状态，正在重试。")
@@ -230,11 +235,14 @@ export default function SelfModeling() {
             })
             if (!messageResponse.ok) throw new Error(await readError(messageResponse))
             let output = ""
+            let logs: ModelLog[] = []
             const result = await readEventStream(messageResponse, event => {
+                const nextLogs = appendModelLog(logs, event)
                 if (event.origin !== "child" && event.kind === "text_delta" && typeof event.text === "string") {
                     output += event.text
-                    updateSession(id!, {output})
                 }
+                if (nextLogs !== logs) updateSession(id!, {output, logs: nextLogs})
+                logs = nextLogs
             })
             if (result.completed) {
                 const status: ModelStatus = result.status === "error" ? "error" : result.status === "stopped" ? "stopped" : ["complete", "completed", "success", "done"].includes(result.status ?? "") ? "complete" : "interrupted"
@@ -244,8 +252,9 @@ export default function SelfModeling() {
                 const finalResponse = await fetch(`/api/sessions/${encodeURIComponent(id)}`, {cache: "no-store"})
                 if (finalResponse.ok) {
                     const finalData = await finalResponse.json() as { messages: unknown }
-                    const finalOutput = normalizeMessages(finalData.messages).filter(message => message.role === "assistant").map(message => message.content).join("\n\n")
-                    if (finalOutput) updateSession(id, {output: finalOutput})
+                    const messages = normalizeMessages(finalData.messages)
+                    const finalOutput = messages.filter(message => message.role === "assistant").map(message => message.content).join("\n\n")
+                    updateSession(id, {...(finalOutput ? {output: finalOutput} : {}), logs: logs.length ? logs : modelLogsFromMessages(messages)})
                 }
             } catch {
                 setNotice("已保留实时输出，最终记录暂时无法同步。")
@@ -337,7 +346,7 @@ export default function SelfModeling() {
                 className="model-history">{sessions.filter(item => item.config.name.toLowerCase().includes(search.toLowerCase())).map(item =>
                 <button className={`model-history-item ${openId === item.id ? "is-active" : ""}`} key={item.id}
                         onClick={() => openTask(item.id)}><span><i
-                    className={`model-status-dot ${item.status}`}/>{item.config.name}</span><small>{statusLabels[item.status]} · {new Date(item.updatedAt).toLocaleDateString("zh-CN")}</small>
+                    className={`model-status-dot ${item.status}`}/>{item.config.name}</span><small><span className={`model-history-status ${item.status}`}>{statusLabels[item.status]}</span> · {new Date(item.updatedAt).toLocaleDateString("zh-CN")}</small>
                 </button>)}{!sessions.length &&
                 <p className="model-history-empty">每一次探索，都会留在这里。</p>}{sessions.length > 0 && !sessions.some(item => item.config.name.toLowerCase().includes(search.toLowerCase())) &&
                 <p className="model-history-empty">没有匹配的任务</p>}</div>
@@ -492,7 +501,7 @@ export default function SelfModeling() {
                     </div>
                 </section>
                 <nav className="model-tabs"
-                     aria-label="建模任务视图">{([["experiments", "实验详情"], ["analysis", "结果分析"], ["config", "任务配置"], ["logs", "执行记录"]] as const).map(([id, title]) =>
+                     aria-label="建模任务视图">{([["experiments", "实验详情"], ["analysis", "结果分析"], ["config", "任务配置"], ["logs", "执行日志"]] as const).map(([id, title]) =>
                     <button key={id} className={tab === id ? "is-active" : ""}
                             aria-current={tab === id ? "page" : undefined}
                             onClick={() => setTab(id)}>{title}{id === "experiments" &&
@@ -541,7 +550,7 @@ export default function SelfModeling() {
                                         <p>{selected.plan || "该实验未提供计划说明。"}</p></article>
                                     <div className="model-plan-connector">↓</div>
                                     <article className="model-result-card"><h3><Icon kind="check" size={17}/>评估结果</h3>
-                                        <p>{selected.result || "查看执行记录了解完整评估过程。"}</p></article>
+                                        <p>{selected.result || "查看执行日志了解完整评估过程。"}</p></article>
                                     <div className="model-detail-meta">
                                         <span>算法 <b>{selected.algorithm || "未提供"}</b></span><span>耗时 <b>{selected.duration || "未提供"}</b></span><span>评估 <b>固定验证集</b></span>
                                     </div>
@@ -551,12 +560,12 @@ export default function SelfModeling() {
                                 </div> : <div className="model-code">{demo &&
                                     <p>示例片段，用于展示源码视图；数据变量需在实际训练脚本中定义。</p>}{selected.code ?
                                     <Markdown content={`\`\`\`python\n${selected.code}\n\`\`\``}/> : <div
-                                        className="model-empty-small">此实验未附带源码。真实任务的源码与产物路径可在执行记录中查看。</div>}</div>}</> :
+                                        className="model-empty-small">此实验未附带源码。真实任务的源码与产物路径可在执行日志中查看。</div>}</div>}</> :
                             <div className="model-waiting">
                                 <div className="model-waiting-icon"><Icon size={34}/></div>
                                 <h2>{session?.status === "running" ? "智能体正在探索建模方案" : "暂未生成结构化实验结果"}</h2>
-                                <p>数据检查、基线训练和评估结果会逐步呈现。<br/>你可以在执行记录中查看实际进展。</p>
-                                <button className="model-button" onClick={() => setTab("logs")}>查看执行记录 →</button>
+                                <p>数据检查、基线训练和评估结果会逐步呈现。<br/>你可以在执行日志中查看实际进展。</p>
+                                <button className="model-button" onClick={() => setTab("logs")}>查看执行日志 →</button>
                             </div>}</section>
                     </div>}
                     {tab === "analysis" && <div className="model-analysis">
@@ -621,10 +630,11 @@ export default function SelfModeling() {
                             </div>)}</dl>
                     </section>}
                     {tab === "logs" && <section className="model-log-panel">
-                        <div className="model-section-heading"><h2>执行记录</h2>
+                        <div className="model-section-heading"><h2>执行日志</h2>
                             <span>{demo ? "演示说明" : session && statusLabels[session.status]}</span></div>
                         {demo ? <Markdown
-                            content="### 示例任务说明\n\n此工作区展示 12 个实验方案的演进、指标对比和配置。所有指标均为演示数据。\n\n真实任务会在这里显示智能体的数据检查、训练过程、工具执行后的结论与最终报告。\n\n点击「新建建模任务」，填写本地数据路径与目标列，即可通过现有智能体运行真实任务。"/> : session?.output ?
+                            content="### 示例任务说明\n\n此工作区展示 12 个实验方案的演进、指标对比和配置。所有指标均为演示数据。\n\n真实任务会在这里显示智能体的数据检查、训练过程、工具执行后的结论与最终报告。\n\n点击「新建建模任务」，填写本地数据路径与目标列，即可通过现有智能体运行真实任务。"/> : session?.logs?.length ?
+                            <ModelExecutionLogs key={session.id} logs={session.logs}/> : session?.output.trim() ?
                             <Markdown
                                 content={session.output.replace(/```modeling-report\s*\n[\s\S]*?```/g, "\n> 已将结构化评估结果同步至实验详情。\n")}/> :
                             <div
