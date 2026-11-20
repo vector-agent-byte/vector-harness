@@ -1,5 +1,5 @@
 import {useCallback, useEffect, useRef, useState} from "react"
-import type {FormEvent, ReactNode} from "react"
+import type {CSSProperties, FormEvent, ReactNode} from "react"
 import {normalizeMessages, readError, readEventStream} from "./api.ts"
 import {Markdown as RenderMarkdown} from "./components.tsx"
 import {
@@ -17,6 +17,7 @@ import {
 import type {Experiment, ModelConfig, ModelLog} from "./modeling.ts"
 import ModelEvolution from "./ModelEvolution.tsx"
 import ModelExecutionLogs from "./ModelExecutionLogs.tsx"
+import SessionSidebarDivider from "./SessionSidebarDivider.tsx"
 import "./SelfModeling.css"
 
 type ModelStatus = "running" | "complete" | "stopped" | "error" | "interrupted"
@@ -95,6 +96,8 @@ function Markdown({content}: { content: string }) {
 }
 
 export default function SelfModeling() {
+    const [sidebarWidth, setSidebarWidth] = useState<number | undefined>(undefined)
+    const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
     const [sessions, setSessions] = useState<ModelSession[]>(loadSessions)
     const [openId, setOpenId] = useState<string | null>(null)
     const [config, setConfig] = useState<ModelConfig>({...defaultModelConfig})
@@ -330,7 +333,7 @@ export default function SelfModeling() {
     </>
 
     return <div className="model-app">
-        <aside className="model-sidebar">
+        <aside id="modeling-session-sidebar" className={`model-sidebar ${sidebarCollapsed ? "is-collapsed" : ""}`} style={{"--model-sidebar-width": sidebarWidth === undefined ? undefined : `${sidebarWidth}px`} as CSSProperties}>
             <div className="model-brand"><Icon/><div className="model-brand-name"><strong>auto-research</strong><small>自进化建模</small></div><span>BETA</span></div>
             <button className="model-new" onClick={() => newTask()}><Icon kind="plus" size={16}/>新建建模任务</button>
             <div className="model-sidebar-section"><span>建模工作台</span></div>
@@ -354,6 +357,7 @@ export default function SelfModeling() {
                 <div>从一个目标，到更优模型<small>配置 · 实验 · 评估 · 迭代</small></div>
             </div>
         </aside>
+        <SessionSidebarDivider sidebarId="modeling-session-sidebar" collapsed={sidebarCollapsed} onToggle={() => setSidebarCollapsed(value => !value)} onResize={setSidebarWidth}/>
         <main className="model-main">
             <header className="model-topbar">
                 <div><span>自进化建模</span><span

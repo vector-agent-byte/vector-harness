@@ -58,6 +58,7 @@ import "./App.css"
 import DeepResearch from "./DeepResearch.tsx"
 import SelfModeling from "./SelfModeling.tsx"
 import HomePage from "./HomePage.tsx"
+import SessionSidebarDivider from "./SessionSidebarDivider.tsx"
 import {normalizeAppView, workspaceEntries} from "./appViews.ts"
 import type {AppView} from "./appViews.ts"
 
@@ -108,6 +109,7 @@ export default function App() {
   const [dialogOffset, setDialogOffset] = useState({ x: 0, y: 0 })
   const [dialogSize, setDialogSize] = useState<{ width: number; height: number } | null>(null)
   const [sidebarWidth, setSidebarWidth] = useState(220)
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
   const [workdirWidth, setWorkdirWidth] = useState(260)
   const [viewMode, setViewMode] = useState<"chat" | "trace" | "chain">("chat")
   const [runnerChain, setRunnerChain] = useState("")
@@ -139,7 +141,7 @@ export default function App() {
     | null
   >(null)
   dialogOffsetRef.current = dialogOffset
-  const panelResizeRef = useRef<{ panel: "sidebar" | "workdir"; startX: number; startWidth: number } | null>(null)
+  const panelResizeRef = useRef<{ startX: number; startWidth: number } | null>(null)
   const menuRef = useRef<HTMLDivElement | null>(null)
   const entryMenuRef = useRef<HTMLDivElement | null>(null)
   const viewedPathRef = useRef("")
@@ -410,11 +412,7 @@ export default function App() {
       const drag = panelResizeRef.current
       if (drag) {
         const delta = event.clientX - drag.startX
-        if (drag.panel === "sidebar") {
-          setSidebarWidth(clamp(drag.startWidth + delta, 140, 480))
-        } else {
-          setWorkdirWidth(clamp(drag.startWidth - delta, 160, 520))
-        }
+        setWorkdirWidth(clamp(drag.startWidth - delta, 160, 520))
         return
       }
       const start = dialogGesture.current
@@ -449,12 +447,11 @@ export default function App() {
     }
   }, [])
 
-  function beginPanelResize(event: ReactPointerEvent<HTMLDivElement>, panel: "sidebar" | "workdir") {
+  function beginPanelResize(event: ReactPointerEvent<HTMLDivElement>) {
     event.preventDefault()
     panelResizeRef.current = {
-      panel,
       startX: event.clientX,
-      startWidth: panel === "sidebar" ? sidebarWidth : workdirWidth,
+      startWidth: workdirWidth,
     }
     event.currentTarget.setPointerCapture(event.pointerId)
   }
@@ -1215,7 +1212,7 @@ export default function App() {
       </div>
       {appView === "home" ? <HomePage onNavigate={setAppView} onOpenSession={id => { setAppView("agent"); void selectSession(id) }} sessions={sessions} runningId={runningId} listReady={listReady} workdir={workdir}/> : appView !== "agent" ? null : (
       <>
-      <aside className="sidebar" style={{ width: sidebarWidth }}>
+      <aside id="agent-session-sidebar" className={`sidebar ${sidebarCollapsed ? "is-collapsed" : ""}`} style={{ width: sidebarWidth }}>
         <div className="brand">
           <svg className="brand-icon" aria-hidden="true" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
             <rect x="3" y="7" width="14" height="10" rx="2" />
@@ -1275,7 +1272,7 @@ export default function App() {
           })}
         </ul>
       </aside>
-      <div className="panel-resize panel-resize-left" onPointerDown={(e) => beginPanelResize(e, "sidebar")} />
+      <SessionSidebarDivider sidebarId="agent-session-sidebar" collapsed={sidebarCollapsed} onToggle={() => setSidebarCollapsed(value => !value)} onResize={setSidebarWidth}/>
       <main className="main">
         <header className="topbar">
           <div className="title-block">
@@ -1561,7 +1558,7 @@ export default function App() {
           </>
         )}
       </main>
-      <div className="panel-resize panel-resize-right" onPointerDown={(e) => beginPanelResize(e, "workdir")} />
+      <div className="panel-resize panel-resize-right" onPointerDown={beginPanelResize} />
       <aside className="workdir-panel" style={{ width: workdirWidth }}>
         <div className="workdir-card">
           <div className="workdir-head">

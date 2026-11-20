@@ -2308,7 +2308,7 @@
   flex-direction: column;
   min-height: 0;
   background: #fff;
-  border-right: 1px solid #e5e5e5;
+  overflow-x: hidden;
   overflow-y: auto;
 }
 
@@ -2368,6 +2368,8 @@
   letter-spacing: -.3px;
   line-height: 1.25;
   white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .brand-name small,

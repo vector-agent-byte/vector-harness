@@ -70,6 +70,15 @@ async function screenshot(name) {
   await writeFile(join(outputDir, name), Buffer.from(image.data, "base64"))
 }
 
+async function resizeSidebar(selector, delta) {
+  const point = await evaluate(`(() => { const rect = document.querySelector(${JSON.stringify(selector)}).getBoundingClientRect(); return {x: rect.x + rect.width / 2, y: rect.y + rect.height * 0.3} })()`)
+  await send("Input.dispatchMouseEvent", {type: "mouseMoved", ...point})
+  await send("Input.dispatchMouseEvent", {type: "mousePressed", button: "left", buttons: 1, clickCount: 1, ...point})
+  await send("Input.dispatchMouseEvent", {type: "mouseMoved", button: "left", buttons: 1, x: point.x + delta, y: point.y})
+  await send("Input.dispatchMouseEvent", {type: "mouseReleased", button: "left", buttons: 0, clickCount: 1, x: point.x + delta, y: point.y})
+  await delay(100)
+}
+
 try {
   await connect()
   await send("Runtime.enable")
@@ -140,6 +149,39 @@ try {
   }
   assert.deepEqual(brandPositions[0], brandPositions[1])
   assert.deepEqual(brandPositions[0], brandPositions[2])
+  for (const [label, panel, divider] of [["进入智能体", ".sidebar", ".app > .session-sidebar-divider"], ["进入深度研究", ".research-left", ".research-app .session-sidebar-divider"], ["进入自进化建模", ".model-sidebar", ".model-app .session-sidebar-divider"]]) {
+    const handle = `${divider} .panel-resize-left`
+    await click(label)
+    assert.equal(await evaluate(`!!document.querySelector('${handle}')`), true)
+    const before = await evaluate(`document.querySelector('${panel}').getBoundingClientRect().width`)
+    await resizeSidebar(handle, 80)
+    const after = await evaluate(`document.querySelector('${panel}').getBoundingClientRect().width`)
+    assert.ok(Math.abs(after - before - 80) < 1, `${label} sidebar should follow the drag: ${before} -> ${after}`)
+    await send("Input.dispatchMouseEvent", {type: "mouseMoved", x: 900, y: 400})
+    assert.equal(await evaluate(`document.querySelector('${panel}').getBoundingClientRect().width`), after)
+    await evaluate(`document.querySelector('${divider} button').click()`)
+    await waitFor(`document.querySelector('${panel}').getBoundingClientRect().width === 0`)
+    assert.equal(await evaluate(`document.querySelector('${divider} button').getAttribute('aria-expanded')`), "false")
+    await click("返回首页")
+    await click(label)
+    assert.equal(await evaluate(`document.querySelector('${panel}').getBoundingClientRect().width`), 0)
+    await evaluate(`document.querySelector('${divider} button').click()`)
+    await waitFor(`document.querySelector('${panel}').getBoundingClientRect().width > 0`)
+    assert.equal(await evaluate(`document.querySelector('${panel}').getBoundingClientRect().width`), after)
+    await evaluate(`document.querySelector('${handle}').focus()`)
+    await send("Input.dispatchKeyEvent", {type: "keyDown", key: "ArrowRight", code: "ArrowRight", windowsVirtualKeyCode: 39})
+    await send("Input.dispatchKeyEvent", {type: "keyUp", key: "ArrowRight", code: "ArrowRight", windowsVirtualKeyCode: 39})
+    await waitFor(`Math.abs(document.querySelector('${panel}').getBoundingClientRect().width - ${after + 10}) < 1`)
+    await resizeSidebar(handle, -10)
+    await resizeSidebar(handle, -80)
+    if (label === "进入自进化建模") {
+      await screenshot("12-sidebar-expanded.png")
+      await evaluate(`document.querySelector('${divider} button').click()`)
+      await screenshot("13-sidebar-collapsed.png")
+      await evaluate(`document.querySelector('${divider} button').click()`)
+    }
+    await click("返回首页")
+  }
   assert.equal(await evaluate("window.modelCalls.filter(call => call.method === 'POST').length"), 0)
   const navPoint = await evaluate("(() => { const rect = document.querySelector('.activity-item[aria-label=深度研究]').getBoundingClientRect(); return {x: rect.x + rect.width / 2, y: rect.y + rect.height / 2} })()")
   await send("Input.dispatchMouseEvent", {type: "mouseMoved", ...navPoint})
@@ -184,6 +226,7 @@ try {
   assert.equal(await evaluate("!!document.querySelector('.model-algorithms')"), true)
   await click("示例实验演示")
   await waitFor("document.querySelectorAll('.model-step').length === 12")
+  assert.equal(await evaluate("getComputedStyle(document.querySelector('.model-step.is-selected')).boxShadow"), "none")
   await screenshot("02-experiments.png")
   await click("最优")
   assert.equal(await evaluate("document.querySelectorAll('.model-step').length"), 1)

@@ -3,6 +3,7 @@ import type { FormEvent, KeyboardEvent } from "react"
 import { normalizeMessages, readError, readEventStream } from "./api.ts"
 import { Markdown } from "./components.tsx"
 import { formatRelativeTime } from "./format.ts"
+import SessionSidebarDivider from "./SessionSidebarDivider.tsx"
 import {
   extractResearchTasks,
   extractResearchTasksFromDelegates,
@@ -58,6 +59,8 @@ function buildResearchPrompt(topic: string, engine: string): string {
 }
 
 export default function DeepResearch() {
+  const [sidebarWidth, setSidebarWidth] = useState<number | undefined>(undefined)
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
   const [sessions, setSessions] = useState<ResearchSession[]>([])
   const [openId, setOpenId] = useState<string | null>(null)
   const [topicDraft, setTopicDraft] = useState("")
@@ -435,7 +438,7 @@ export default function DeepResearch() {
   return (
     <div className="research-app">
       {/* Left sidebar */}
-      <aside className="research-left">
+      <aside id="research-session-sidebar" className={`research-left ${sidebarCollapsed ? "is-collapsed" : ""}`} style={{width: sidebarWidth}}>
         <div className="research-left-header">
           <div className="research-title">
             <svg
@@ -541,6 +544,8 @@ export default function DeepResearch() {
           </div>
         )}
       </aside>
+
+      <SessionSidebarDivider sidebarId="research-session-sidebar" collapsed={sidebarCollapsed} onToggle={() => setSidebarCollapsed(value => !value)} onResize={setSidebarWidth}/>
 
       {/* Main content */}
       <div className="research-main">

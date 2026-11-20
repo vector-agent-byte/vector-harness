@@ -1,0 +1,73 @@
+.session-sidebar-divider {
+  position: relative;
+  flex: 0 0 1px;
+  align-self: stretch;
+  width: 1px;
+  background: #e5e5e5;
+  z-index: 5;
+}
+
+.session-sidebar-divider > .panel-resize {
+  position: absolute;
+  inset: 0;
+  touch-action: none;
+  user-select: none;
+}
+
+.session-sidebar-divider > .panel-resize:focus-visible {
+  background: #2563eb;
+  outline: 2px solid #2563eb;
+  outline-offset: 0;
+}
+
+.sidebar-collapse-button {
+  position: absolute;
+  left: 0;
+  top: 50%;
+  transform: translateY(-50%);
+  display: grid;
+  place-items: center;
+  width: 20px;
+  height: 54px;
+  padding: 0;
+  border: 1px solid #dfe4eb;
+  border-left: 0;
+  border-radius: 0 8px 8px 0;
+  background: #fff;
+  color: #7b8798;
+  cursor: pointer;
+  z-index: 11;
+}
+
+.sidebar-collapse-button svg {
+  width: 12px;
+  height: 20px;
+}
+
+.sidebar-collapse-button:hover {
+  color: #245dc6;
+  border-color: #b9cce8;
+  background: #f5f8fd;
+}
+
+.sidebar-collapse-button:focus-visible {
+  outline: 2px solid #245dc6;
+  outline-offset: 2px;
+}
+
+.sidebar.is-collapsed,
+.research-left.is-collapsed {
+  display: none;
+}
+
+@media (min-width: 651px) {
+  .model-sidebar.is-collapsed {
+    display: none;
+  }
+}
+
+@media (max-width: 650px) {
+  .model-app > .session-sidebar-divider {
+    display: none;
+  }
+}

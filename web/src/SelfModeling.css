@@ -41,11 +41,11 @@
 .model-sidebar {
     display: flex;
     flex-direction: column;
-    width: 235px;
+    width: var(--model-sidebar-width, 235px);
     flex: none;
     padding: 20px 13px 15px;
     background: white;
-    border-right: 1px solid #e9eaed;
+    overflow-x: hidden;
     min-height: 0;
 }
 
@@ -1107,7 +1107,7 @@
 .model-step.is-selected {
     border-color: #729bd9;
     background: #f7faff;
-    box-shadow: 0 0 0 1px #729bd91a;
+    box-shadow: none;
 }
 
 .model-step > div {
@@ -1965,7 +1965,7 @@ summary.model-log-summary:hover,
 .model-step.is-selected {
     border-color: #3771cb;
     background: #eaf2ff;
-    box-shadow: inset 3px 0 0 #3771cb;
+    box-shadow: none;
 }
 
 .model-stats .model-score,
@@ -2232,7 +2232,7 @@ summary.model-log-summary:hover,
 
 @media (max-width: 1150px) {
     .model-sidebar {
-        width: 205px;
+        width: var(--model-sidebar-width, 205px);
     }
 
     .model-create-scroll {
@@ -2272,7 +2272,7 @@ summary.model-log-summary:hover,
 
 @media (max-width: 900px) {
     .model-sidebar {
-        width: 185px;
+        width: var(--model-sidebar-width, 185px);
         padding: 20px 13px 16px;
     }
 
