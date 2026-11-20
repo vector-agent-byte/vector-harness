@@ -438,7 +438,19 @@ export default function DeepResearch() {
       <aside className="research-left">
         <div className="research-left-header">
           <div className="research-title">
-            <span className="research-title-icon">🔍</span>
+            <svg
+              className="research-title-icon"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              aria-hidden="true"
+            >
+              <circle cx="10.5" cy="10.5" r="6.5" />
+              <path d="m16 16 4.5 4.5" />
+            </svg>
             <div className="research-title-name">
               <strong>deep-research</strong>
               <small>深度研究</small>

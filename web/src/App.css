@@ -2262,7 +2262,10 @@
 }
 
 .research-title-icon {
-  font-size: 14px;
+  width: 16px;
+  height: 16px;
+  flex-shrink: 0;
+  color: #166534;
 }
 
 .brand-name,
@@ -2290,6 +2293,14 @@
   font-weight: 400;
   letter-spacing: .2px;
   line-height: 1.4;
+}
+
+.research-title-name strong {
+  color: #166534;
+}
+
+.research-title-name small {
+  color: #6b7280;
 }
 
 .research-form {
