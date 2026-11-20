@@ -3,7 +3,6 @@ import {Markdown as RenderMarkdown} from "../../components.tsx"
 import ModelEvolution from "../../ModelEvolution.tsx"
 import ModelExecutionLogs from "../../ModelExecutionLogs.tsx"
 import SessionSidebarDivider from "../../SessionSidebarDivider.tsx"
-import LegacyNotice from "../tasks/LegacyNotice.tsx"
 import {useAutoresearch, statusLabels} from "./useAutoresearch.ts"
 import "../../SelfModeling.css"
 const templates = [
@@ -61,7 +60,7 @@ function Markdown({content}: { content: string }) {
 
 
 export default function AutoresearchPage() {
-const {sidebarWidth, setSidebarWidth, sidebarCollapsed, setSidebarCollapsed, openId, config, tab, setTab, setSelectedId, filter, setFilter, detailTab, setDetailTab, advanced, setAdvanced, search, setSearch, notice, setNotice, starting, stopping, parent, setParent, sessions, legacy, error, setError, demo, warnings, session, currentConfig, snapshot, experiments, best, selected, running, viewing, improvement, metricDirection, filtered, change, changeTask, applyTemplate, choices, inputProps, newTask, openTask, start, stop, download, busy, optionsReady, runIdleTask, removeTask} = useAutoresearch()
+const {sidebarWidth, setSidebarWidth, sidebarCollapsed, setSidebarCollapsed, openId, config, tab, setTab, setSelectedId, filter, setFilter, detailTab, setDetailTab, advanced, setAdvanced, search, setSearch, notice, setNotice, starting, stopping, parent, setParent, sessions, error, setError, demo, warnings, session, currentConfig, snapshot, experiments, best, selected, running, viewing, improvement, metricDirection, filtered, change, changeTask, applyTemplate, choices, inputProps, newTask, openTask, start, stop, download, busy, optionsReady, runIdleTask, removeTask} = useAutoresearch()
     const basicFields = <>
         <Field label="任务名称"><input name="name" {...inputProps("name")} value={config.name} onChange={event => change("name", event.target.value)}
                                        placeholder="选填，留空自动命名"/></Field>
@@ -94,8 +93,6 @@ const {sidebarWidth, setSidebarWidth, sidebarCollapsed, setSidebarCollapsed, ope
             <div className="model-brand"><Icon/><div className="model-brand-name"><strong>auto-research</strong><small>自进化建模</small></div><span>BETA</span></div>
             <button className="model-new" onClick={() => newTask()}><Icon kind="plus" size={16}/>新建建模任务</button>
             <div className="model-sidebar-section"><span>建模工作台</span></div>
-            <button className={`model-side-link ${!viewing ? "is-active" : ""}`} onClick={() => newTask()}><Icon
-                kind="data" size={16}/>任务配置<span>↗</span></button>
             <button className={`model-side-link ${demo ? "is-active" : ""}`} onClick={() => openTask("demo")}><Icon
                 kind="chart" size={16}/>示例实验<span className="model-demo-tag">演示</span></button>
             <div className="model-sidebar-section"><span>历史任务</span><span>{sessions.length}</span></div>
@@ -123,7 +120,6 @@ const {sidebarWidth, setSidebarWidth, sidebarCollapsed, setSidebarCollapsed, ope
                     className="model-private-dot"/>{demo ? "示例工作区" : "本地工作区"}{viewing &&
                     <button className="model-button" onClick={download}>导出报告 ↗</button>}</div>
             </header>
-            <LegacyNotice legacy={legacy}/>
             {warnings.length > 0 && <div className="model-alert" role="alert">{warnings.join(" · ")}</div>}
             {error && <div className="model-alert error" role="alert">{error}
                 <button aria-label="关闭错误提示" onClick={() => setError("")}>×</button>

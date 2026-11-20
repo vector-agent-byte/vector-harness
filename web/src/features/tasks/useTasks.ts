@@ -2,7 +2,6 @@ import {useCallback, useEffect, useRef, useState} from "react"
 import {taskApi, TaskHttpError} from "./api.ts"
 import type {TaskBase, TaskCreate, TaskDetail, TaskKind} from "./api.ts"
 import {importLegacy} from "./legacy.ts"
-import type {LegacyResult} from "./legacy.ts"
 import type {StreamEvent} from "../../types.ts"
 
 export function useTasks<Task extends TaskBase>(kind: TaskKind, selectedId: string | null) {
@@ -10,7 +9,6 @@ export function useTasks<Task extends TaskBase>(kind: TaskKind, selectedId: stri
     const [tasks, setTasks] = useState<Task[]>([])
     const [details, setDetails] = useState<Record<string, TaskDetail<Task>>>({})
     const [error, setError] = useState("")
-    const [legacy, setLegacy] = useState<LegacyResult>({raw: "", errors: []})
     const [streamingId, setStreamingId] = useState<string | null>(null)
     const [runningId, setRunningId] = useState<string | null>(null)
     const [loaded, setLoaded] = useState(false)
@@ -115,16 +113,12 @@ export function useTasks<Task extends TaskBase>(kind: TaskKind, selectedId: stri
             }
         }
         void (async () => {
-            let result: LegacyResult
             try {
-                result = await importLegacy(kind, localStorage)
-            } catch (reason) {
-                result = {raw: "", errors: [String(reason)]}
+                await importLegacy(kind, localStorage)
+            } finally {
+                if (!cancelled) await sync()
             }
-            if (cancelled) return
-            setLegacy(result)
-            await sync()
-        })()
+        })().catch(() => undefined)
         const timer = window.setInterval(() => void sync(), 3000)
         const controllers = streams.current
         return () => {
@@ -185,7 +179,7 @@ export function useTasks<Task extends TaskBase>(kind: TaskKind, selectedId: stri
     }
 
     return {
-        tasks, details, error, setError, legacy, streamingId, runningId, loaded, reload, refresh, run,
+        tasks, details, error, setError, streamingId, runningId, loaded, reload, refresh, run,
         create: async (body: TaskCreate<Task>) => {
             const task = await api.create(body);
             listGeneration.current += 1;

@@ -189,7 +189,39 @@ try {
   await send("Emulation.setDeviceMetricsOverride", { width: 1440, height: 1080, deviceScaleFactor: 1, mobile: false })
   await send("Page.navigate", { url: base })
 
+  for (const width of [1440, 900]) {
+    await send("Emulation.setDeviceMetricsOverride", { width, height: 1080, deviceScaleFactor: 1, mobile: false })
+    const positions = []
+    for (const [title, selector, button] of [["智能体", ".brand", ".new-session"], ["深度研究", ".research-title", ".research-new-task"], ["自进化建模", ".model-brand", ".model-new"]]) {
+      await navigate(title)
+      positions.push(await evaluate(`(() => {
+        const heading = document.querySelector(${JSON.stringify(selector)})
+        return [heading, heading.querySelector('svg'), heading.querySelector('strong'), heading.querySelector('small'), document.querySelector(${JSON.stringify(button)})].map(element => {
+          const rect = element.getBoundingClientRect()
+          return {top: rect.top, left: rect.left}
+        })
+      })()`))
+    }
+    for (const position of positions.slice(1)) {
+      for (let index = 0; index < position.length; index++) {
+        assert.ok(Math.abs(position[index].top - positions[0][index].top) < 1, `Sidebar vertical alignment at ${width}px: ${JSON.stringify(positions)}`)
+        if (index < 4) assert.ok(Math.abs(position[index].left - positions[0][index].left) < 1, `Sidebar horizontal alignment at ${width}px: ${JSON.stringify(positions)}`)
+      }
+    }
+  }
+  await send("Emulation.setDeviceMetricsOverride", { width: 1440, height: 1080, deviceScaleFactor: 1, mobile: false })
+  console.log("PASS sidebar: title, subtitle, icon and new-task button align across three modules at 1440px and 900px")
+
   await navigate("深度研究")
+  assert.equal(await evaluate("!!document.querySelector('.research-left .research-topic-input')"), false)
+  await click(".research-new-task")
+  assert.equal(await evaluate("!!document.querySelector('.research-main .research-form')"), true)
+  assert.equal(await evaluate("document.querySelector('.research-form button[type=submit]').disabled"), true)
+  await click(".research-app .sidebar-collapse-button")
+  assert.equal(await evaluate("document.querySelector('.research-app .sidebar-collapse-button').getAttribute('aria-expanded')"), "false")
+  assert.equal(await evaluate("getComputedStyle(document.querySelector('.research-left')).display"), "none")
+  await click(".research-app .sidebar-collapse-button")
+  assert.equal(await evaluate("document.querySelector('.research-app .sidebar-collapse-button').getAttribute('aria-expanded')"), "true")
   await fill(".research-topic-input", "Browser research smoke")
   await click(".research-form button[type='submit']")
   const research = await taskComplete("deepresearch", "Browser research smoke")
@@ -197,6 +229,18 @@ try {
   assert.match((await get(`/api/deepresearch/tasks/${research.id}`)).task.report, /Browser research complete/)
   await reload()
   await navigate("深度研究")
+  await click(".research-history-item", "Browser research smoke")
+  await waitFor("document.querySelector('.research-app')?.textContent.includes('Browser research complete')")
+  await click(".research-new-task")
+  await fill(".research-topic-input", "Unsubmitted research draft")
+  await delay(3500)
+  assert.equal(await evaluate("document.querySelector('.research-topic-input')?.value"), "Unsubmitted research draft")
+  assert.equal((await get("/api/deepresearch/tasks")).tasks.length, 1)
+  await send("Emulation.setDeviceMetricsOverride", { width: 430, height: 932, deviceScaleFactor: 1, mobile: false })
+  await click(".research-app .sidebar-collapse-button")
+  assert.equal(await evaluate("document.documentElement.scrollWidth <= 430"), true)
+  await send("Emulation.setDeviceMetricsOverride", { width: 1440, height: 1080, deviceScaleFactor: 1, mobile: false })
+  await click(".research-app .sidebar-collapse-button")
   await click(".research-history-item", "Browser research smoke")
   await waitFor("document.querySelector('.research-app')?.textContent.includes('Browser research complete')")
   console.log("PASS research: UI create/run, real streamed report, persisted history and report after reload")

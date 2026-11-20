@@ -27,27 +27,28 @@
   transform: translateY(-50%);
   display: grid;
   place-items: center;
-  width: 20px;
-  height: 54px;
+  width: 18px;
+  height: 70px;
   padding: 0;
-  border: 1px solid #dfe4eb;
+  border: 1px solid #e7e7e7;
   border-left: 0;
-  border-radius: 0 8px 8px 0;
+  border-radius: 0 12px 12px 0;
   background: #fff;
-  color: #7b8798;
+  color: #929292;
+  box-shadow: 2px 0 8px rgb(0 0 0 / 4%);
   cursor: pointer;
   z-index: 11;
 }
 
 .sidebar-collapse-button svg {
-  width: 12px;
-  height: 20px;
+  width: 10px;
+  height: 16px;
 }
 
 .sidebar-collapse-button:hover {
-  color: #245dc6;
-  border-color: #b9cce8;
-  background: #f5f8fd;
+  color: #555;
+  border-color: #ddd;
+  background: #fff;
 }
 
 .sidebar-collapse-button:focus-visible {

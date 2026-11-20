@@ -7,7 +7,13 @@ export function useDeepResearch() {
 
     const [sidebarWidth, setSidebarWidth] = useState<number | undefined>(undefined)
     const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
-    const [openId, setOpenId] = useState<string | null>(null)
+    const [openId, setOpenId] = useState<string | null>(() => {
+        try {
+            return localStorage.getItem("vh-research-open")
+        } catch {
+            return null
+        }
+    })
     const [topicDraft, setTopicDraft] = useState("")
     const [engine, setEngine] = useState<"advanced" | "standard">("advanced")
     const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null)
@@ -20,7 +26,7 @@ export function useDeepResearch() {
     const [starting, setStarting] = useState(false)
     const launchLock = useRef(false)
     const controller = useTasks<ResearchSnapshot>("deepresearch", openId)
-    const {tasks: sessions, legacy, error: errorText, setError: setErrorText} = controller
+    const {tasks: sessions, error: errorText, setError: setErrorText} = controller
     const task = sessions.find(item => item.id === openId)
     const detail = openId ? controller.details[openId] : undefined
     const openSession = task ? {
@@ -45,22 +51,16 @@ export function useDeepResearch() {
     const taskDetail = selectedTask ? openSession?.details?.[selectedTask.id] ?? null : null
     const totalEvents = openSession?.messages.length ?? 0
     useEffect(() => {
-        if (controller.loaded && (!openId || !sessions.some(session => session.id === openId))) {
-            let saved: string | null = null
-            try {
-                saved = localStorage.getItem("vh-research-open")
-            } catch {
-            }
-            setOpenId(sessions.find(item => item.id === saved)?.id ?? sessions[0]?.id ?? null)
+        if (controller.loaded && openId && !sessions.some(session => session.id === openId)) {
+            setOpenId(null)
             setSelectedTaskId(null)
         }
     }, [openId, sessions, controller.loaded])
     useEffect(() => {
-        if (openId) {
-            try {
-                localStorage.setItem("vh-research-open", openId)
-            } catch {
-            }
+        try {
+            if (openId) localStorage.setItem("vh-research-open", openId)
+            else localStorage.removeItem("vh-research-open")
+        } catch {
         }
     }, [openId])
 
@@ -140,6 +140,20 @@ export function useDeepResearch() {
         setSelectedTaskIndex(null);
         setLogOpen(false);
         setInstructionOpen(false)
+        setFollowUpDraft("")
+        setErrorText("")
+    }
+
+    function newTask() {
+        setOpenId(null)
+        setTopicDraft("")
+        setEngine("advanced")
+        setSelectedTaskId(null)
+        setFollowUpDraft("")
+        setLogOpen(false)
+        setInstructionOpen(false)
+        setQueriesOpen(false)
+        setErrorText("")
     }
 
     function copyPath(value: string) {
@@ -184,13 +198,14 @@ export function useDeepResearch() {
         copiedInstruction,
         setCopiedInstruction,
         sessions,
-        legacy,
         errorText,
         openSession,
         warnings,
         sessionDone,
         isRunning,
         running,
+        starting,
+        newTask,
         tasks,
         progress,
         selectedTask,

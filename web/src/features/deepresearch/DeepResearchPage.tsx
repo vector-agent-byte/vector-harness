@@ -3,11 +3,11 @@ import type {ChatMessage} from "../../types.ts"
 import {Markdown} from "../../components.tsx"
 import {formatRelativeTime} from "../../format.ts"
 import SessionSidebarDivider from "../../SessionSidebarDivider.tsx"
-import LegacyNotice from "../tasks/LegacyNotice.tsx"
 import {useDeepResearch} from "./useDeepResearch.ts"
+import ResearchCreateForm from "./ResearchCreateForm.tsx"
 
 export default function DeepResearchPage() {
-const {sidebarWidth, setSidebarWidth, sidebarCollapsed, setSidebarCollapsed, openId, topicDraft, setTopicDraft, engine, setEngine, selectedTaskIndex, setSelectedTaskIndex, copied, logOpen, setLogOpen, queriesOpen, setQueriesOpen, followUpDraft, setFollowUpDraft, instructionOpen, setInstructionOpen, copiedInstruction, setCopiedInstruction, sessions, legacy, errorText, openSession, warnings, sessionDone, isRunning, running, tasks, progress, selectedTask, taskDetail, totalEvents, statusLabel, statusClass, stopResearch, sendFollowUp, onTopicKeyDown, onFormSubmit, switchSession, copyPath, activeTaskId, runIdleTask, removeTask} = useDeepResearch()
+const {sidebarWidth, setSidebarWidth, sidebarCollapsed, setSidebarCollapsed, openId, topicDraft, setTopicDraft, engine, setEngine, selectedTaskIndex, setSelectedTaskIndex, copied, logOpen, setLogOpen, queriesOpen, setQueriesOpen, followUpDraft, setFollowUpDraft, instructionOpen, setInstructionOpen, copiedInstruction, setCopiedInstruction, sessions, errorText, openSession, warnings, isRunning, running, starting, newTask, tasks, progress, selectedTask, taskDetail, totalEvents, statusLabel, statusClass, stopResearch, sendFollowUp, onTopicKeyDown, onFormSubmit, switchSession, copyPath, runIdleTask, removeTask} = useDeepResearch()
   return (
     <div className="research-app">
       {/* Left sidebar */}
@@ -34,71 +34,14 @@ const {sidebarWidth, setSidebarWidth, sidebarCollapsed, setSidebarCollapsed, ope
           </div>
         </div>
 
-        <form className="research-form" onSubmit={onFormSubmit}>
-          <label className="research-field-label">研究主题</label>
-          <textarea
-            className="research-topic-input"
-            placeholder="输入您想深入研究的主题…"
-            value={topicDraft}
-            disabled={running}
-            onChange={(e) => setTopicDraft(e.target.value)}
-            onKeyDown={onTopicKeyDown}
-            rows={4}
-          />
+        <button type="button" className="research-new-task" onClick={newTask}>
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
+          新建研究任务
+        </button>
 
-          <label className="research-field-label">搜索引擎</label>
-          <select
-            className="research-engine-select"
-            value={engine}
-            disabled={running}
-            onChange={(e) => setEngine(e.target.value as "advanced" | "standard")}
-          >
-            <option value="advanced">advanced</option>
-            <option value="standard">standard</option>
-          </select>
-
-          {openSession && (
-            <>
-              <label className="research-field-label">研究进度</label>
-              <div className="research-progress-wrap">
-                <div
-                  className={`research-progress-bar${sessionDone ? " is-done" : ""}`}
-                  style={{ width: progress.total > 0 ? `${(progress.done / progress.total) * 100}%` : "0%" }}
-                />
-              </div>
-              <div className="research-progress-label">
-                {progress.done} / {progress.total} 任务完成
-              </div>
-            </>
-          )}
-
-          {running ? (
-            <button
-              type="button"
-              className="research-stop-btn"
-              disabled={!activeTaskId}
-              onClick={() => void stopResearch()}
-            >
-              {activeTaskId ? "■ 停止研究" : "其他任务运行中"}
-            </button>
-          ) : (
-            <button
-              type="submit"
-              className="research-start-btn"
-              disabled={!topicDraft.trim()}
-            >
-              + 开始新研究
-            </button>
-          )}
-        </form>
-
-        {errorText && (
-          <div className="research-error">{errorText}</div>
-        )}
-
-        {sessions.length > 0 && (
           <div className="research-history">
-            <div className="research-history-label">历史研究</div>
+            <div className="research-history-label">历史研究 · {sessions.length}</div>
+            {!sessions.length && <p className="research-history-empty">每一次研究，都会留在这里。</p>}
             <ul className="research-history-list">
               {sessions.map((s) => (
                 <li key={s.id}>
@@ -116,14 +59,17 @@ const {sidebarWidth, setSidebarWidth, sidebarCollapsed, setSidebarCollapsed, ope
               ))}
             </ul>
           </div>
-        )}
       </aside>
 
       <SessionSidebarDivider sidebarId="research-session-sidebar" collapsed={sidebarCollapsed} onToggle={() => setSidebarCollapsed(value => !value)} onResize={setSidebarWidth}/>
 
       {/* Main content */}
       <div className="research-main">
-        <LegacyNotice legacy={legacy} className="research-error"/>
+        <header className="research-page-header">
+          <div><span>深度研究</span><span>/</span><strong>{openSession ? "研究工作区" : "新建任务"}</strong></div>
+          <small>本地工作区</small>
+        </header>
+        {errorText && <div className="research-error" role="alert">{errorText}</div>}
         {/* Top status bar */}
         {openSession && (
           <>
@@ -175,17 +121,15 @@ const {sidebarWidth, setSidebarWidth, sidebarCollapsed, setSidebarCollapsed, ope
                 阶段记录 {totalEvents} 条
               </button>
               {openSession.status === "idle" && <button className="research-log-btn" disabled={running} onClick={() => void runIdleTask()}>开始执行</button>}
+              {isRunning && <button className="research-log-btn" onClick={() => void stopResearch()}>停止研究</button>}
               <button className="research-log-btn" disabled={running} onClick={() => void removeTask()}>删除任务</button>
             </div>
           </>
         )}
 
         {!openSession ? (
-          <div className="research-empty">
-            <div className="research-empty-icon">🔍</div>
-            <div className="research-empty-title">开始深度研究</div>
-            <div className="research-empty-hint">在左侧输入研究主题，然后点击"开始新研究"</div>
-          </div>
+          <ResearchCreateForm topic={topicDraft} engine={engine} running={running} starting={starting}
+            onTopicChange={setTopicDraft} onEngineChange={setEngine} onTopicKeyDown={onTopicKeyDown} onSubmit={onFormSubmit}/>
         ) : (
           <div className="research-content">
             {/* Center: task cards */}

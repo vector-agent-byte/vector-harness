@@ -42,7 +42,7 @@ export function useAutoresearch() {
     const launchLock = useRef(false)
     const [liveLogs, setLiveLogs] = useState<Record<string, ModelLog[]>>({})
     const controller = useTasks<ModelSnapshot>("autoresearch", openId)
-    const {tasks: sessions, legacy, error, setError} = controller
+    const {tasks: sessions, error, setError} = controller
     useEffect(() => {
         if (controller.loaded && openId && openId !== "demo" && !sessions.some(task => task.id === openId)) setOpenId(null)
     }, [controller.loaded, openId, sessions])
@@ -236,7 +236,6 @@ export function useAutoresearch() {
         parent,
         setParent,
         sessions,
-        legacy,
         error,
         setError,
         demo,

@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react"
 import "./App.css"
+import "./SidebarBrand.css"
 import DeepResearch from "./DeepResearch.tsx"
 import SelfModeling from "./SelfModeling.tsx"
 import HomePage from "./HomePage.tsx"
