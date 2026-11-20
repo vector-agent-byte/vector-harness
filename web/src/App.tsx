@@ -56,14 +56,16 @@ import type {
 } from "./types.ts"
 import "./App.css"
 import DeepResearch from "./DeepResearch.tsx"
+import SelfModeling from "./SelfModeling.tsx"
 
 const POLL_MS = 1000
 const OPEN_SESSION_KEY = "vector-open-session"
 
 export default function App() {
-  const [appView, setAppView] = useState<"agent" | "deepresearch">(
-    () => (localStorage.getItem("vh-app-view") as "agent" | "deepresearch") ?? "agent"
-  )
+  const [appView, setAppView] = useState<"agent" | "deepresearch" | "modeling">(() => {
+    const saved = localStorage.getItem("vh-app-view")
+    return saved === "deepresearch" || saved === "modeling" ? saved : "agent"
+  })
   const [sessions, setSessions] = useState<SessionItem[]>([])
   const [runningId, setRunningId] = useState<string | null>(null)
   const [openId, setOpenId] = useState<string | null>(null)
@@ -1197,10 +1199,22 @@ export default function App() {
           >
             深度研究
           </button>
+          <button
+            type="button"
+            className={appView === "modeling" ? "activity-item is-active" : "activity-item"}
+            title="自进化建模"
+            aria-label="自进化建模"
+            onClick={() => setAppView("modeling")}
+          >
+            自进化建模
+          </button>
         </nav>
       </div>
 
-      {appView === "deepresearch" ? (
+      <div style={{ display: appView === "modeling" ? "flex" : "none", flex: 1, minWidth: 0, minHeight: 0 }}>
+        <SelfModeling />
+      </div>
+      {appView === "modeling" ? null : appView === "deepresearch" ? (
         <DeepResearch />
       ) : (
       <>
