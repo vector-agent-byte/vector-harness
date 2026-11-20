@@ -12,20 +12,20 @@ import os
 from collections.abc import Mapping
 from pathlib import Path
 
-from vector_harness.assembly import (
+from vector_harness.agent.assembly import (
     DEFAULT_CHILD_MAX_STEPS,
     DEFAULT_KEEP_LAST,
     DEFAULT_MAX_CHARS,
     apply_patterns,
 )
-from vector_harness.core.config import apply_config, default_config_path, log_settings_from_config
-from vector_harness.core.loop import Loop
-from vector_harness.core.provider import OpenAICompatibleProvider
-from vector_harness.core.session import Session
-from vector_harness.tools.edit import EditFile
-from vector_harness.tools.fetch import WebFetch
-from vector_harness.tools.read import ReadFile
-from vector_harness.tools.shell import Shell
+from vector_harness.agent.core.config import apply_config, default_config_path, log_settings_from_config
+from vector_harness.agent.core.loop import Loop
+from vector_harness.agent.core.provider import OpenAICompatibleProvider
+from vector_harness.agent.core.session import Session
+from vector_harness.agent.tools.edit import EditFile
+from vector_harness.agent.tools.fetch import WebFetch
+from vector_harness.agent.tools.read import ReadFile
+from vector_harness.agent.tools.shell import Shell
 
 DEFAULT_SYSTEM = "你是一名能力出色的智能助手。请使用工具在工作空间中完成任务。"
 

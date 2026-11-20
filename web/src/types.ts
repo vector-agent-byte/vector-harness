@@ -72,6 +72,8 @@ export type SessionList = {
 }
 
 export type StreamEvent = {
+  task?: unknown
+  revision?: unknown
   kind?: unknown
   text?: unknown
   name?: unknown

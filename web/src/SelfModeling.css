@@ -245,7 +245,7 @@
     background: #4285df;
 }
 
-.model-status-dot.complete, .model-private-dot {
+.model-status-dot.completed, .model-private-dot {
     background: #48a78e;
 }
 
@@ -908,7 +908,7 @@
     background: #eaf2ff;
 }
 
-.model-state.complete {
+.model-state.completed {
     color: #399b80;
     background: #eef9f5;
 }
@@ -1971,7 +1971,7 @@ summary.model-log-summary:hover,
 .model-stats .model-score,
 .model-best-tag,
 .model-valid-tag,
-.model-state.complete,
+.model-state.completed,
 .model-result-card h3,
 .model-chart-caption b,
 .model-best-symbol {
@@ -1980,7 +1980,7 @@ summary.model-log-summary:hover,
 
 .model-best-tag,
 .model-valid-tag,
-.model-state.complete {
+.model-state.completed {
     background: #def3e9;
 }
 

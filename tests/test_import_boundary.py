@@ -1,96 +1,121 @@
 import ast
+import os
+from importlib.util import resolve_name
 from pathlib import Path
+import subprocess
+import sys
+import textwrap
+
+import pytest
 
 SRC_ROOT = Path(__file__).resolve().parents[1] / "src" / "vector_harness"
+AGENT_ROOT = SRC_ROOT / "agent"
+DOMAIN_IMPORTS = (
+    "vector_harness.web",
+    "vector_harness.deepresearch",
+    "vector_harness.autoresearch",
+)
+CORE_FORBIDDEN = DOMAIN_IMPORTS + (
+    "vector_harness.patterns",
+    "vector_harness.agent.patterns",
+    "vector_harness.agent.application",
+    "vector_harness.cli",
+)
 
-src_roots = [
-    SRC_ROOT / "__init__.py",
-    *sorted((SRC_ROOT / "core").glob("*.py")),
-    *sorted((SRC_ROOT / "tools").glob("*.py")),
-]
 
-FORBIDDEN = ("vector_harness.patterns", "vector_harness.cli", "vector_harness.web")
-
-
-def _module_names(node: ast.AST):
+def _module_names(node: ast.AST, package: str):
     if isinstance(node, ast.Import):
         for alias in node.names:
             yield alias.name
-    elif isinstance(node, ast.ImportFrom) and node.module:
-        yield node.module
+    elif isinstance(node, ast.ImportFrom):
+        module = node.module or ""
+        if node.level:
+            module = resolve_name("." * node.level + module, package)
+        yield module
+        for alias in node.names:
+            yield f"{module}.{alias.name}"
 
 
-def imports_of(paths: list[Path]) -> list[str]:
-    offenders: list[str] = []
+def imports_of(paths: list[Path], forbidden: tuple[str, ...]) -> list[str]:
+    offenders: set[str] = set()
     for path in paths:
-        if not path.is_file():
-            continue
+        package = ".".join(path.parent.relative_to(SRC_ROOT.parent).parts)
         tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
         for node in ast.walk(tree):
-            if isinstance(node, (ast.Import, ast.ImportFrom)):
-                for name in _module_names(node):
-                    if name and any(
-                        name == forbidden or name.startswith(forbidden + ".")
-                        for forbidden in FORBIDDEN
-                    ):
-                        offenders.append(f"{path.relative_to(SRC_ROOT.parent)}: {name}")
+            for name in _module_names(node, package):
+                if any(name == prefix or name.startswith(prefix + ".") for prefix in forbidden):
+                    offenders.add(f"{path.relative_to(SRC_ROOT.parent)}: {name}")
     return sorted(offenders)
 
 
-def _drop_pattern_modules() -> None:
-    import sys
+def _run_clean(code: str) -> None:
+    env = dict(os.environ, PYTHONPATH=str(SRC_ROOT.parent))
+    result = subprocess.run(
+        [sys.executable, "-c", textwrap.dedent(code)],
+        cwd=SRC_ROOT.parent.parent,
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
 
-    for name in list(sys.modules):
-        if (
-            name == "vector_harness.patterns"
-            or name.startswith("vector_harness.patterns.")
-            or name == "vector_harness.assembly"
-        ):
-            del sys.modules[name]
+
+@pytest.mark.parametrize("construct", [False, True])
+def test_plain_harness_does_not_load_patterns_or_application(construct):
+    _run_clean(f"""
+        import sys
+        import vector_harness
+
+        if {construct!r}:
+            vector_harness.VectorHarness(name="agent", llm=object(), system_prompt="system")
+
+        forbidden = {CORE_FORBIDDEN + ('vector_harness.assembly', 'vector_harness.agent.assembly')!r}
+        loaded = [name for name in sys.modules if any(
+            name == prefix or name.startswith(prefix + ".") for prefix in forbidden
+        )]
+        assert loaded == [], loaded
+        assert "vector_harness.agent.core.agent" in sys.modules
+    """)
 
 
 def test_attach_import_is_lazy():
-    import sys
-
-    _drop_pattern_modules()
-    try:
+    _run_clean("""
+        import sys
         import vector_harness
 
-        assert "vector_harness.patterns" not in sys.modules
-        assert "vector_harness.assembly" not in sys.modules
-        for name in list(sys.modules):
-            assert not name.startswith("vector_harness.patterns.")
-
+        assert "vector_harness.agent.assembly" not in sys.modules
+        assert "vector_harness.agent.patterns" not in sys.modules
         from vector_harness import attach
+        from vector_harness.agent.assembly import attach as canonical_attach
 
-        assert attach.__name__ == "attach"
-        assert "vector_harness.patterns" in sys.modules
-        assert "vector_harness.assembly" in sys.modules
-    finally:
-        _drop_pattern_modules()
-
-
-def test_plain_harness_does_not_load_patterns():
-    import sys
-
-    from vector_harness import VectorHarness
-
-    _drop_pattern_modules()
-    try:
-        VectorHarness(name="助手", llm=object(), system_prompt="原文")
-        assert "vector_harness.patterns" not in sys.modules
-        assert "vector_harness.assembly" not in sys.modules
-    finally:
-        _drop_pattern_modules()
+        assert attach is canonical_attach
+        assert "vector_harness.agent.patterns" in sys.modules
+        assert "vector_harness.agent.application" not in sys.modules
+        assert "vector_harness.web" not in sys.modules
+        assert "vector_harness.cli" not in sys.modules
+    """)
 
 
-def test_package_root_does_not_import_patterns_or_cli():
-    import sys
+def test_core_tools_and_public_root_do_not_import_upper_layers():
+    paths = [SRC_ROOT / "__init__.py"]
+    for root in (SRC_ROOT, AGENT_ROOT):
+        for directory in ("core", "tools"):
+            paths.extend(sorted((root / directory).rglob("*.py")))
+    assert imports_of(paths, CORE_FORBIDDEN) == []
 
-    import vector_harness
 
-    assert "vector_harness.patterns" not in sys.modules
-    assert "vector_harness.cli" not in sys.modules
-    assert "vector_harness.web" not in sys.modules
-    offenders = imports_of(src_roots)
-    assert offenders == []
+def test_agent_does_not_import_transport_or_research_domains():
+    assert imports_of(sorted(AGENT_ROOT.rglob("*.py")), DOMAIN_IMPORTS) == []
+
+
+def test_moved_implementation_uses_canonical_imports():
+    paths = [AGENT_ROOT / "assembly.py"]
+    for directory in ("core", "patterns", "tools"):
+        paths.extend(sorted((AGENT_ROOT / directory).rglob("*.py")))
+    assert imports_of(paths, (
+        "vector_harness.core",
+        "vector_harness.patterns",
+        "vector_harness.tools",
+        "vector_harness.assembly",
+    )) == []

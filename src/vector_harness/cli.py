@@ -7,7 +7,7 @@ from collections.abc import Iterable, Mapping
 from pathlib import Path
 from uuid import uuid4
 
-from vector_harness.assembly import DEFAULT_KEEP_LAST, DEFAULT_MAX_CHARS
+from vector_harness.agent.assembly import DEFAULT_KEEP_LAST, DEFAULT_MAX_CHARS
 from vector_harness.bootstrap import (
     DEFAULT_SYSTEM,
     build_agent,
@@ -16,7 +16,7 @@ from vector_harness.bootstrap import (
     merged_env,
 )
 from vector_harness.cli_render import _Printer
-from vector_harness.core.session import Session
+from vector_harness.agent.core.session import Session
 from vector_harness.types import ProviderError
 from vector_harness.web.sessions import session_path
 

@@ -84,6 +84,10 @@ text = agent.run("2 + 3 * 4 等于多少")
 
 ### 本机网页
 
+后端按 `agent`、`deepresearch`、`autoresearch`、`web` 分工：研究和自主建模的提示词、配置校验、结果解析、最优实验选择与任务记录由服务端管理；网页只提交结构化输入和展示结果。研究与建模历史保存在会话旁的元数据中，刷新或更换浏览器仍可查询。旧浏览器记录会尝试关联导入，失败记录保留供导出。模块边界、接口及迁移细节见 [架构说明](docs/architecture.md)。
+
+新 Python 实现位于 `vector_harness.agent`；原 `core`、`patterns`、`tools` 等导入路径继续兼容，顶层嵌入 API 与 CLI 不变。
+
 页面在 `web/`，用 React 和 Vite。安装后可以用 `vector-harness-web`，也可以在仓库根目录执行：
 
 ```powershell

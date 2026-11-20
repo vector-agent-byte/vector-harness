@@ -6,10 +6,10 @@ import { renderToStaticMarkup } from "react-dom/server"
 import { createServer } from "vite"
 import type { ViteDevServer } from "vite"
 import type { Experiment } from "./src/modeling.ts"
-import { demoExperiments } from "./src/modeling.ts"
+import { demoExperiments, demoSnapshot } from "./src/features/autoresearch/demo.ts"
 
 let server: ViteDevServer
-let Chart: ComponentType<{ experiments: Experiment[]; metric: string; onSelect: (id: number) => void }>
+let Chart: ComponentType<{ experiments: Experiment[]; metric: string; bestId?: number | null; baselineId?: number | null; improvement?: number | null; metricDirection?: "minimize" | "maximize"; onSelect: (id: number) => void }>
 before(async () => {
   server = await createServer({ server: { middlewareMode: true }, appType: "custom" })
   Chart = (await server.ssrLoadModule("/src/ModelEvolution.tsx")).default
@@ -17,7 +17,7 @@ before(async () => {
 after(async () => { await server?.close() })
 
 test("chart uses bounded height, readable summary and accessible experiment controls", () => {
-  const html = renderToStaticMarkup(createElement(Chart, { experiments: demoExperiments, metric: "AUC-ROC", onSelect() {} }))
+  const html = renderToStaticMarkup(createElement(Chart, { ...demoSnapshot, metric: "AUC-ROC", onSelect() {} }))
   assert.match(html, /height="280"/)
   assert.match(html, /指标演进/)
   assert.match(html, /较基线改善/)
@@ -29,7 +29,14 @@ test("chart uses bounded height, readable summary and accessible experiment cont
 test("empty and single-experiment results render without invalid chart coordinates", () => {
   const empty = renderToStaticMarkup(createElement(Chart, { experiments: [], metric: "RMSE", onSelect() {} }))
   assert.match(empty, /尚无可用/)
-  const single = renderToStaticMarkup(createElement(Chart, { experiments: demoExperiments.slice(0, 1), metric: "RMSE", onSelect() {} }))
+  const single = renderToStaticMarkup(createElement(Chart, { experiments: demoExperiments.slice(0, 1), baselineId: 0, bestId: 0, improvement: 0, metricDirection: "minimize", metric: "RMSE", onSelect() {} }))
   assert.doesNotMatch(single, /NaN|Infinity/)
   assert.match(single, /越低越好/)
+})
+
+test("chart displays server-selected winner and improvement without re-ranking scores", () => {
+  const html = renderToStaticMarkup(createElement(Chart, {experiments: demoExperiments, metric: "AUC-ROC", bestId: 3, baselineId: 7, improvement: -0.12345, metricDirection: "minimize", onSelect() {}}))
+  assert.match(html, /最优 0.61052/)
+  assert.match(html, /-0.12345/)
+  assert.match(html, /0.62560/)
 })

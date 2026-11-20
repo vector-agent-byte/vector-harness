@@ -102,7 +102,8 @@ def object_body(raw: bytes) -> dict | None:
     """正文必须是 JSON 对象。不是就返回 None。"""
     try:
         payload = json.loads(raw.decode("utf-8"))
-    except (UnicodeDecodeError, json.JSONDecodeError):
+        json.dumps(payload, ensure_ascii=False, allow_nan=False).encode("utf-8")
+    except (ValueError, UnicodeError, RecursionError):
         return None
     return payload if isinstance(payload, dict) else None
 

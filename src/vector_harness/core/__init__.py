@@ -1,5 +1,1 @@
-"""核心运行时：工具循环、模型接口、会话。不导入模式包。
-
-一次模型请求的收集在 ``turn``，工具执行在 ``dispatch``，消息往返在 ``codec``。
-连接文件在 ``config``，流式分片在 ``openai_events``。
-"""
+"""Compatibility namespace for :mod:`vector_harness.agent.core`."""

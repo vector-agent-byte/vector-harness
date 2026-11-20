@@ -13,7 +13,7 @@ from collections.abc import Callable, Mapping
 from pathlib import Path
 
 from vector_harness.bootstrap import load_provider, memory_path as _memory_path
-from vector_harness.core.config import default_config_path
+from vector_harness.agent.core.config import default_config_path
 from vector_harness.types import ProviderError
 from vector_harness.web.config import CONFIG_ERRORS
 from vector_harness.web.server import WebServer, WebSettings

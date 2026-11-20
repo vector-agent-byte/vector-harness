@@ -2710,9 +2710,21 @@
   color: #991b1b;
 }
 
-.research-task-badge.pending {
+.research-task-badge.pending,
+.research-task-badge.unknown {
   background: #f3f4f6;
   color: #6b7280;
+}
+
+.research-detail-inference,
+.research-source-inference {
+  color: #92400e;
+  font-size: 12px;
+}
+
+.research-source-inference {
+  display: block;
+  margin-top: 4px;
 }
 
 /* ── Main area ── */
@@ -2723,6 +2735,22 @@
   min-height: 0;
   min-width: 0;
   background: #fff;
+}
+
+.research-report {
+  flex: none;
+  padding: 12px 24px;
+  border-top: 1px solid #e5e5e5;
+}
+
+.research-report summary {
+  cursor: pointer;
+  color: #166534;
+}
+
+.research-report-content {
+  max-height: 260px;
+  overflow: auto;
 }
 
 .research-heading {
@@ -3558,7 +3586,7 @@ button.research-queries-toggle:hover {
   border-radius: 10px;
 }
 
-.research-history-status.complete {
+.research-history-status.completed {
   background: #f0fdf4;
   color: #15803d;
 }

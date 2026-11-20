@@ -50,8 +50,8 @@ test("log summaries keep full details and handle malformed parameters", () => {
     assert.equal(malformed.preview, "{invalid")
     assert.deepEqual(malformed.todos, [])
     const report = modeling.describeModelLog({kind: "text_delta", label: "输出", source: "main", content: '评估完成\n```modeling-report\n{"experiments": []}\n```'})
-    assert.doesNotMatch(report.content, /"experiments"/)
-    assert.match(report.content, /实验详情/)
+    assert.match(report.content, /"experiments"/)
+    assert.match(report.content, /modeling-report/)
 })
 
 test("execution logs show thinking and tools before any assistant text", () => {
