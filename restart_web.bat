@@ -19,9 +19,9 @@ powershell.exe -NoProfile -Command ^
   "} catch { Write-Host $_.Exception.Message; exit 1 }"
 if errorlevel 1 goto :fail
 
-echo Starting http://127.0.0.1:8787/ with max-steps=50
+echo Starting http://127.0.0.1:8787/ with max-steps=100
 echo Keep this window open. Press Ctrl+C to stop the service.
-"%PYTHON_EXE%" -m vector_harness.web --workspace . --max-steps 50 --compact
+"%PYTHON_EXE%" -m vector_harness.web --workspace . --max-steps 100 --compact
 if errorlevel 1 goto :fail
 exit /b 0
 

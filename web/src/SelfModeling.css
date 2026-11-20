@@ -53,12 +53,15 @@
     display: flex;
     align-items: center;
     gap: 8px;
-    padding: 0 5px 22px;
+    padding: 0 3px 22px;
     font-size: 14px;
 }
 
 .model-brand > svg {
     color: #4874bf;
+    width: 18px;
+    height: 18px;
+    flex-shrink: 0;
 }
 
 .model-brand-name {
@@ -2270,12 +2273,12 @@ summary.model-log-summary:hover,
 @media (max-width: 900px) {
     .model-sidebar {
         width: 185px;
-        padding: 16px 10px;
+        padding: 20px 13px 16px;
     }
 
     .model-brand {
         font-size: 12px;
-        gap: 5px;
+        gap: 8px;
     }
 
     .model-brand > span {
@@ -2364,7 +2367,7 @@ summary.model-log-summary:hover,
         flex-direction: row;
         align-items: center;
         gap: 8px;
-        padding: 10px;
+        padding: 20px 16px 10px;
         min-height: auto;
         border-right: 0;
         border-bottom: 1px solid #e9eaed;

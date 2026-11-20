@@ -59,7 +59,7 @@ async function waitFor(expression) {
   throw new Error(`Condition not met: ${expression}`)
 }
 async function click(text) {
-  await evaluate(`(() => { const button = [...document.querySelectorAll('.model-app button, .activity-nav button')].find(item => item.textContent.trim() === ${JSON.stringify(text)}); if (!button) throw Error('Missing button: ' + ${JSON.stringify(text)}); button.click(); })()`)
+  await evaluate(`(() => { const button = [...document.querySelectorAll('.model-app button, .activity-nav button, .activity-logo, .home-page button')].find(item => item.getClientRects().length && (item.getAttribute('aria-label') === ${JSON.stringify(text)} || item.textContent.trim() === ${JSON.stringify(text)})); if (!button) throw Error('Missing button: ' + ${JSON.stringify(text)}); button.click(); })()`)
   await delay(100)
 }
 async function fill(selector, value) {
@@ -76,8 +76,8 @@ try {
   await send("Page.enable")
   await send("Emulation.setDeviceMetricsOverride", { width: 1440, height: 1080, deviceScaleFactor: 1, mobile: false })
   await send("Page.addScriptToEvaluateOnNewDocument", { source: `
-    localStorage.setItem('vh-app-view', 'modeling');
     window.modelCalls = [];
+    window.homeSessions = [];
     const originalFetch = window.fetch;
     window.modelMode = 'complete';
     let runningId = null;
@@ -88,7 +88,7 @@ try {
       window.modelCalls.push({ url, method: options.method || 'GET', body: options.body });
       const json = data => new Response(JSON.stringify(data), { headers: { 'Content-Type': 'application/json' } });
       if (url === '/api/sessions' && options.method === 'POST') return json({ id: 'model-test-' + crypto.randomUUID() });
-      if (url === '/api/sessions') return json({ sessions: [], running_id: runningId, model: 'test' });
+      if (url === '/api/sessions') return json({ sessions: window.homeSessions, running_id: runningId, model: 'test' });
       if (url.endsWith('/mode')) return json({ mode: 'plan' });
       if (url.endsWith('/messages')) {
         if (window.modelMode === 'error') return new Response(JSON.stringify({ error: 'test_failure' }), { status: 500 });
@@ -128,6 +128,54 @@ try {
     };
   ` })
   await send("Page.navigate", { url: "http://127.0.0.1:5181" })
+  await waitFor("!!document.querySelector('.home-page')")
+  assert.equal(await evaluate("document.querySelectorAll('.home-workspace-card').length"), 3)
+  await waitFor("document.querySelector('.home-empty')?.textContent.includes('从第一个任务开始')")
+  await screenshot("09-home.png")
+  const brandPositions = []
+  for (const [label, selector] of [["进入智能体", ".brand-name"], ["进入深度研究", ".research-title-name"], ["进入自进化建模", ".model-brand-name"]]) {
+    await click(label)
+    brandPositions.push(await evaluate(`(() => { const title = document.querySelector('${selector} strong').getBoundingClientRect(); const subtitle = document.querySelector('${selector} small').getBoundingClientRect(); return [title.x, title.y, subtitle.x, subtitle.y] })()`))
+    await click("返回首页")
+  }
+  assert.deepEqual(brandPositions[0], brandPositions[1])
+  assert.deepEqual(brandPositions[0], brandPositions[2])
+  assert.equal(await evaluate("window.modelCalls.filter(call => call.method === 'POST').length"), 0)
+  const navPoint = await evaluate("(() => { const rect = document.querySelector('.activity-item[aria-label=深度研究]').getBoundingClientRect(); return {x: rect.x + rect.width / 2, y: rect.y + rect.height / 2} })()")
+  await send("Input.dispatchMouseEvent", {type: "mouseMoved", ...navPoint})
+  assert.equal(await evaluate("getComputedStyle(document.querySelector('#activity-description-deepresearch')).visibility"), "hidden")
+  await waitFor("getComputedStyle(document.querySelector('#activity-description-deepresearch')).opacity === '1'")
+  assert.equal(await evaluate("getComputedStyle(document.querySelector('#activity-description-deepresearch')).backgroundColor"), "rgb(37, 53, 77)")
+  assert.match(await evaluate("document.querySelector('#activity-description-deepresearch').textContent"), /参考来源/)
+  await screenshot("10-navigation-tooltip.png")
+  const tooltipPoint = await evaluate("(() => { const rect = document.querySelector('#activity-description-deepresearch').getBoundingClientRect(); return {x: rect.x + 20, y: rect.y + 20} })()")
+  await send("Input.dispatchMouseEvent", {type: "mouseMoved", ...tooltipPoint})
+  assert.equal(await evaluate("getComputedStyle(document.querySelector('#activity-description-deepresearch')).visibility"), "visible")
+  await send("Input.dispatchKeyEvent", {type: "keyDown", key: "Escape", code: "Escape", windowsVirtualKeyCode: 27})
+  await send("Input.dispatchKeyEvent", {type: "keyUp", key: "Escape", code: "Escape", windowsVirtualKeyCode: 27})
+  await waitFor("getComputedStyle(document.querySelector('#activity-description-deepresearch')).visibility === 'hidden'")
+  await send("Input.dispatchMouseEvent", {type: "mouseMoved", x: 800, y: 100})
+  assert.equal(await evaluate("getComputedStyle(document.querySelector('#activity-description-deepresearch')).visibility"), "hidden")
+  await send("Page.reload")
+  await waitFor("!!document.querySelector('.home-page')")
+  await click("进入智能体")
+  await evaluate("document.querySelector('.activity-logo').focus()")
+  assert.equal(await evaluate("document.activeElement.classList.contains('activity-logo')"), true)
+  await send("Input.dispatchKeyEvent", {type: "keyDown", key: "Enter", code: "Enter", windowsVirtualKeyCode: 13, text: "\r"})
+  await send("Input.dispatchKeyEvent", {type: "keyUp", key: "Enter", code: "Enter", windowsVirtualKeyCode: 13})
+  await waitFor("!!document.querySelector('.home-page')")
+  await evaluate("window.homeSessions = [{id: 'recent-home-test', title: '最近的研究会话', updated_at: Date.now() / 1000, mode: 'act', skills: null}]")
+  await waitFor("document.querySelector('.home-recent-item')?.textContent.includes('最近的研究会话')")
+  await evaluate("document.querySelector('.home-recent-item').click()")
+  await waitFor("document.querySelector('.session-item.is-open')?.textContent.includes('最近的研究会话')")
+  assert.ok(await evaluate("window.modelCalls.some(call => call.url === '/api/sessions/recent-home-test')"))
+  await click("返回首页")
+  await send("Emulation.setDeviceMetricsOverride", { width: 430, height: 932, deviceScaleFactor: 1, mobile: false })
+  assert.equal(await evaluate("document.documentElement.scrollWidth <= 430"), true)
+  await screenshot("11-mobile-home.png")
+  await send("Emulation.setDeviceMetricsOverride", { width: 1440, height: 1080, deviceScaleFactor: 1, mobile: false })
+  await evaluate("window.homeSessions = []")
+  await click("进入自进化建模")
   await waitFor("!!document.querySelector('.model-intro')")
   await screenshot("01-create.png")
   await click("信贷风险预测二分类 · 稳定性与可解释性")
@@ -183,6 +231,12 @@ try {
   assert.equal(await evaluate("document.querySelectorAll('.model-log-entry[open]').length"), 0)
   assert.match(await evaluate("document.querySelector('.model-log-meta time').textContent"), /\d{4}\/\d{2}\/\d{2}.*\d{2}:\d{2}:\d{2}/)
   await screenshot("06-running-logs.png")
+  await click("返回首页")
+  await waitFor("!!document.querySelector('.home-page')")
+  await evaluate("window.modelEmit({kind: 'text_delta', origin: 'child', parent_tool_call_id: 'delegate-1', text: '，首页期间继续运行'})")
+  await click("进入自进化建模")
+  assert.equal(await evaluate("document.querySelector('.model-state').textContent"), "探索中")
+  await waitFor("document.querySelector('.model-log-panel')?.textContent.includes('首页期间继续运行')")
   await evaluate("[...document.querySelectorAll('.model-log-summary')].find(item => item.textContent.includes('调用工具 · shell')).click()")
   assert.equal(await evaluate("[...document.querySelectorAll('.model-log-entry[open] pre')].some(item => item.textContent.includes('python train.py'))"), true)
   await evaluate("[...document.querySelectorAll('.model-log-summary')].find(item => item.textContent.includes('调用工具 · shell')).click()")

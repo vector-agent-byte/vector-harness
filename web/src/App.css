@@ -27,11 +27,11 @@
   color: #1a1a1a;
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 8px;
 }
 .brand-icon {
-  width: 16px;
-  height: 16px;
+  width: 18px;
+  height: 18px;
   flex-shrink: 0;
   color: #1a1a1a;
 }
@@ -2146,6 +2146,22 @@
   justify-content: center;
   margin-bottom: 14px;
   color: rgba(255,255,255,0.9);
+  padding: 0;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  cursor: pointer;
+}
+
+.activity-logo:hover,
+.activity-logo.is-active {
+  background: rgba(255,255,255,0.12);
+  color: #fff;
+}
+
+.activity-bar button:focus-visible {
+  outline: 2px solid #b6d1ff;
+  outline-offset: 2px;
 }
 
 .activity-logo svg {
@@ -2172,7 +2188,7 @@
   border: 0;
   border-radius: 6px;
   background: transparent;
-  color: rgba(255,255,255,0.4);
+  color: rgba(255,255,255,0.75);
   cursor: pointer;
   transition: background 0.15s, color 0.15s;
   position: relative;
@@ -2205,6 +2221,74 @@
   border-radius: 0 2px 2px 0;
 }
 
+.activity-nav-entry {
+  position: relative;
+}
+
+.activity-tooltip {
+  position: absolute;
+  left: calc(100% + 12px);
+  top: 50%;
+  transform: translateY(-50%);
+  z-index: 20;
+  width: min(236px, calc(100vw - 80px));
+  box-sizing: border-box;
+  padding: 13px 15px;
+  border: 1px solid #42546b;
+  border-radius: 9px;
+  background: #25354d;
+  box-shadow: 0 8px 28px #101c3340;
+  color: #e2e8f0;
+  writing-mode: horizontal-tb;
+  text-align: left;
+  font: 12px/1.7 -apple-system, BlinkMacSystemFont, "Segoe UI", "Microsoft YaHei", sans-serif;
+  letter-spacing: normal;
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: auto;
+  transition: opacity .16s ease, visibility 0s linear;
+}
+
+.activity-tooltip::before {
+  content: "";
+  position: absolute;
+  left: -5px;
+  top: calc(50% - 5px);
+  width: 8px;
+  height: 8px;
+  border-left: 1px solid #42546b;
+  border-bottom: 1px solid #42546b;
+  background: #25354d;
+  transform: rotate(45deg);
+}
+
+.activity-tooltip::after {
+  content: "";
+  position: absolute;
+  left: -14px;
+  top: 0;
+  width: 14px;
+  height: 100%;
+}
+
+.activity-tooltip strong,
+.activity-tooltip > span {
+  display: block;
+}
+
+.activity-tooltip strong {
+  color: #fff;
+  font-size: 13px;
+  margin-bottom: 5px;
+}
+
+.activity-nav-entry:not([data-tooltip-dismissed="true"]):hover .activity-tooltip,
+.activity-nav-entry:not([data-tooltip-dismissed="true"]) > .activity-item:focus-visible + .activity-tooltip {
+  opacity: 1;
+  visibility: visible;
+  transition-delay: .5s;
+}
+
 /* ── Deep Research layout ── */
 .research-app {
   display: flex;
@@ -2229,7 +2313,7 @@
 }
 
 .research-left-header {
-  padding: 16px 12px 8px;
+  padding: 20px 16px 8px;
 }
 
 .research-back {
@@ -2254,7 +2338,7 @@
 .research-title {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 8px;
   font-size: 13px;
   font-weight: 700;
   color: #1a1a1a;
@@ -2262,8 +2346,8 @@
 }
 
 .research-title-icon {
-  width: 16px;
-  height: 16px;
+  width: 18px;
+  height: 18px;
   flex-shrink: 0;
   color: #166534;
 }
